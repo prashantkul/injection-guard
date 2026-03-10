@@ -26,6 +26,7 @@ def _ensure_registry() -> None:
     from injection_guard.classifiers.anthropic import AnthropicClassifier
     from injection_guard.classifiers.openai import OpenAIClassifier
     from injection_guard.classifiers.gemini import GeminiClassifier
+    from injection_guard.classifiers.local_llm import LocalLLMClassifier
 
     _CLASSIFIER_REGISTRY.update({
         "regex": RegexPrefilter,
@@ -33,6 +34,9 @@ def _ensure_registry() -> None:
         "anthropic": AnthropicClassifier,
         "openai": OpenAIClassifier,
         "gemini": GeminiClassifier,
+        "local_llm": LocalLLMClassifier,
+        "ollama": LocalLLMClassifier,
+        "vllm": LocalLLMClassifier,
     })
 
 

@@ -18,6 +18,18 @@ classifiers:
     model: gpt-4o
     weight: 1.5
 
+  # Local LLM via Ollama (OpenAI-compatible)
+  # - type: ollama
+  #   model: llama3.2
+  #   base_url: http://localhost:11434/v1
+  #   weight: 1.0
+
+  # Local LLM via vLLM
+  # - type: vllm
+  #   model: meta-llama/Llama-3.1-8B-Instruct
+  #   base_url: http://localhost:8000/v1
+  #   weight: 1.0
+
 router:
   type: cascade
   timeout_ms: 500
