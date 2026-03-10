@@ -220,41 +220,24 @@ class TestQualifireMetrics:
     """Compute and assert on classification metrics."""
 
     async def test_precision_recall_summary(self):
-        """Log precision/recall for the regex-only classifier against Qualifire.
+        """Full benchmark report with Rich confusion matrix and metrics."""
+        from injection_guard.reporting import print_benchmark
 
-        This is more of a reporting test — it always passes but prints metrics.
-        """
         ds = _load_qualifire(split="test", sample_size=200)
         guard = _make_guard()
 
-        tp = fp = tn = fn = 0
-
+        decisions = []
+        labels = []
         for row in ds:
             decision = await guard.classify(row["text"])
-            predicted_injection = decision.action in (Action.FLAG, Action.BLOCK)
-            actual_injection = row["label"] == "jailbreak"
+            decisions.append(decision)
+            labels.append(row["label"])
 
-            if predicted_injection and actual_injection:
-                tp += 1
-            elif predicted_injection and not actual_injection:
-                fp += 1
-            elif not predicted_injection and actual_injection:
-                fn += 1
-            else:
-                tn += 1
-
-        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
-
-        print(f"\n{'='*50}")
-        print(f"Qualifire Benchmark — RegexPrefilter only")
-        print(f"{'='*50}")
-        print(f"Samples: {len(ds)} (TP={tp} FP={fp} TN={tn} FN={fn})")
-        print(f"Precision: {precision:.3f}")
-        print(f"Recall:    {recall:.3f}")
-        print(f"F1:        {f1:.3f}")
-        print(f"{'='*50}")
+        print_benchmark(
+            decisions,
+            labels,
+            title="Qualifire Benchmark — RegexPrefilter only",
+        )
 
         # Regex-only: we expect low recall but decent precision
-        assert precision >= 0.0  # always passes — metrics are informational
+        assert len(decisions) == len(labels)

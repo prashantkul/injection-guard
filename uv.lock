@@ -1542,6 +1542,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
+    { name = "rich" },
 ]
 
 [package.optional-dependencies]
@@ -1639,6 +1640,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "respx", marker = "extra == 'dev'", specifier = ">=0.21.0" },
+    { name = "rich", specifier = ">=14.3.3" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.0" },
     { name = "scikit-learn", marker = "extra == 'eval'", specifier = ">=1.4.0" },
     { name = "tokenizers", marker = "extra == 'local'", specifier = ">=0.20.0" },
