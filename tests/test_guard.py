@@ -184,3 +184,45 @@ class TestDecisionAuditTrail:
         assert "my-clf" in decision.router_path
         assert decision.preprocessor is not None
         assert decision.latency_ms > 0
+
+
+class TestDotenvIntegration:
+    """Test that InjectionGuard loads .env files on init."""
+
+    def test_loads_dotenv_on_init(self, make_classifier, tmp_path, monkeypatch):
+        """API keys from .env are available to classifiers."""
+        env_file = tmp_path / ".env"
+        env_file.write_text("ANTHROPIC_API_KEY=sk-ant-test-12345\n")
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+        import os
+
+        clf = make_classifier(name="clf", score=0.1, label="benign", tier="fast")
+        router = _make_mock_router([
+            ("clf", ClassifierResult(score=0.1, label="benign")),
+        ])
+
+        _guard = InjectionGuard(classifiers=[clf], router=router, dotenv_path=str(env_file))
+
+        assert os.environ.get("ANTHROPIC_API_KEY") == "sk-ant-test-12345"
+
+    def test_dotenv_does_not_override_existing_env(self, make_classifier, tmp_path, monkeypatch):
+        """.env values do not overwrite explicitly set environment variables."""
+        env_file = tmp_path / ".env"
+        env_file.write_text("OPENAI_API_KEY=from-dotenv\n")
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("OPENAI_API_KEY", "from-shell")
+
+        import os
+
+        clf = make_classifier(name="clf", score=0.1, label="benign", tier="fast")
+        router = _make_mock_router([
+            ("clf", ClassifierResult(score=0.1, label="benign")),
+        ])
+
+        _guard = InjectionGuard(classifiers=[clf], router=router, dotenv_path=str(env_file))
+
+        assert os.environ.get("OPENAI_API_KEY") == "from-shell"

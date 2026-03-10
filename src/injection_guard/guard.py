@@ -5,6 +5,8 @@ import asyncio
 import time
 from typing import Literal
 
+from dotenv import load_dotenv
+
 from injection_guard.types import (
     Action,
     AggregatorType,
@@ -55,7 +57,12 @@ class InjectionGuard:
         aggregator: str = "weighted_average",
         meta_classifier_path: str | None = None,
         log_prompts: bool = False,
+        dotenv_path: str | None = None,
     ) -> None:
+        # Load .env file so API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
+        # are available via os.environ without manual export.
+        load_dotenv(dotenv_path=dotenv_path, override=False)
+
         thresholds = thresholds or {"block": 0.85, "flag": 0.50}
 
         self._classifiers = classifiers
