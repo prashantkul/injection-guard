@@ -1,7 +1,7 @@
 # injection-guard
 
 Prompt injection detection library with an ensemble classifier architecture.
-Async-first Python, pluggable classifiers (regex, ONNX, OpenAI, Anthropic), and a full evaluation toolkit.
+Async-first Python, pluggable classifiers (regex, ONNX, OpenAI, Anthropic, Gemini via Vertex AI), and a full evaluation toolkit.
 
 ## Architecture Overview
 
@@ -186,10 +186,19 @@ classDiagram
         +model: str
     }
 
+    class GeminiClassifier {
+        +tier: medium
+        +weight: 1.5
+        +model: str
+        +project: str
+        +region: str
+    }
+
     BaseClassifier <|.. RegexPrefilter
     BaseClassifier <|.. OnnxClassifier
     BaseClassifier <|.. OpenAIClassifier
     BaseClassifier <|.. AnthropicClassifier
+    BaseClassifier <|.. GeminiClassifier
 ```
 
 | Classifier | Tier | Weight | Approach |
@@ -197,6 +206,7 @@ classDiagram
 | RegexPrefilter | fast | 0.5 | Keyword pattern matching |
 | OnnxClassifier | fast | 1.0 | Local ONNX Runtime inference |
 | OpenAIClassifier | medium | 1.5 | OpenAI chat completion API |
+| GeminiClassifier | medium | 1.5 | Google Gemini via Vertex AI |
 | AnthropicClassifier | slow | 2.0 | Anthropic messages API |
 
 ## Aggregation Strategies
@@ -276,13 +286,19 @@ Failures never propagate -- every classifier error is captured and the pipeline 
 
 ## Quick Start
 
+### Programmatic Setup
+
 ```python
 from injection_guard import InjectionGuard
-from injection_guard.classifiers import RegexPrefilter, AnthropicClassifier
+from injection_guard.classifiers import RegexPrefilter, AnthropicClassifier, GeminiClassifier
 from injection_guard.router import CascadeRouter
 
 guard = InjectionGuard(
-    classifiers=[RegexPrefilter(), AnthropicClassifier()],
+    classifiers=[
+        RegexPrefilter(),
+        GeminiClassifier(project="my-gcp-project", region="us-central1"),
+        AnthropicClassifier(),
+    ],
     router=CascadeRouter(),
 )
 
@@ -296,11 +312,79 @@ decision = guard.classify_sync("Hello, how are you?")
 print(decision.action)   # Action.ALLOW
 ```
 
+### YAML Config File
+
+Create a `config.yaml`:
+
+```yaml
+classifiers:
+  - type: regex
+
+  - type: gemini
+    model: gemini-2.0-flash
+    weight: 1.5
+    project: ${GCP_PROJECT_ID}
+    region: ${GCP_REGION}
+
+  - type: anthropic
+    model: claude-sonnet-4-20250514
+    weight: 2.0
+
+  - type: openai
+    model: gpt-4o
+    weight: 1.5
+
+router:
+  type: cascade
+  timeout_ms: 500
+  fast_confidence: 0.85
+
+thresholds:
+  block: 0.85
+  flag: 0.50
+
+aggregator: weighted_average
+
+preprocessor:
+  gliner_model: urchade/gliner_base
+  preprocessor_block_threshold: 0.9
+```
+
+Then load it:
+
+```python
+from injection_guard import InjectionGuard
+
+# From YAML file (API keys loaded from .env automatically)
+guard = InjectionGuard.from_config("config.yaml")
+
+decision = await guard.classify("Tell me about Python")
+print(decision.action)  # Action.ALLOW
+```
+
+Config values support `${ENV_VAR}` and `${ENV_VAR:-default}` syntax for environment variable resolution.
+
+### Environment Variables
+
+Create a `.env` file (see `.env.example`):
+
+```bash
+# API keys
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
+
+# Google Cloud / Vertex AI
+GCP_PROJECT_ID=my-project-123
+GCP_REGION=us-central1
+```
+
+The `.env` file is loaded automatically on `InjectionGuard` init. Existing environment variables are never overridden.
+
 ## Build & Test
 
 ```bash
 pip install -e ".[dev]"    # Install with dev dependencies
-pytest tests/ -v           # Run all 225 tests
+pytest tests/ -v           # Run all tests
 ```
 
 ## Project Structure
@@ -309,6 +393,7 @@ pytest tests/ -v           # Run all 225 tests
 src/injection_guard/
     types.py              # All shared types (single source of truth)
     guard.py              # Main orchestrator
+    config.py             # YAML config loader & factory
     engine.py             # Threshold decision engine
     preprocessor/
         pipeline.py       # 5-stage pipeline orchestration
@@ -322,6 +407,7 @@ src/injection_guard/
         onnx.py           # Local ONNX model
         openai.py         # OpenAI API classifier
         anthropic.py      # Anthropic API classifier
+        gemini.py         # Google Gemini via Vertex AI
     router/
         cascade.py        # Tier-by-tier with early exit
         parallel.py       # Concurrent with quorum

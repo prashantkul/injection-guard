@@ -7,6 +7,7 @@ from injection_guard.classifiers.regex import RegexPrefilter
 from injection_guard.classifiers.onnx import OnnxClassifier
 from injection_guard.classifiers.anthropic import AnthropicClassifier
 from injection_guard.classifiers.openai import OpenAIClassifier
+from injection_guard.classifiers.gemini import GeminiClassifier
 
 __all__ = [
     "BaseClassifier",
@@ -15,4 +16,5 @@ __all__ = [
     "OnnxClassifier",
     "AnthropicClassifier",
     "OpenAIClassifier",
+    "GeminiClassifier",
 ]

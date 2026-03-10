@@ -13,6 +13,8 @@ from injection_guard.types import (
 from injection_guard.guard import InjectionGuard
 from injection_guard.router import CascadeRouter, ParallelRouter
 
+from injection_guard.config import load_config
+
 __all__ = [
     "InjectionGuard",
     "CascadeRouter",
@@ -24,6 +26,7 @@ __all__ = [
     "SignalVector",
     "ThresholdConfig",
     "ModelArmorResult",
+    "load_config",
 ]
 
 __version__ = "0.1.0"

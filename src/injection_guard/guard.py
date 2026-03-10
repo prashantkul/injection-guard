@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Literal
+from pathlib import Path
+from typing import Any, Literal
 
 from dotenv import load_dotenv
 
@@ -81,6 +82,25 @@ class InjectionGuard:
 
         agg_type = AggregatorType(aggregator)
         self._aggregator = get_aggregator(agg_type, meta_model_path=meta_classifier_path)
+
+    @classmethod
+    def from_config(cls, config: str | Path | dict[str, Any]) -> InjectionGuard:
+        """Create an InjectionGuard instance from a YAML file or config dict.
+
+        Args:
+            config: Path to a YAML config file, or a pre-parsed config dict.
+
+        Returns:
+            A fully configured InjectionGuard instance.
+        """
+        from injection_guard.config import load_config, build_from_config
+
+        if isinstance(config, (str, Path)):
+            raw = load_config(config)
+        else:
+            raw = config
+        kwargs = build_from_config(raw)
+        return cls(**kwargs)
 
     async def classify(self, prompt: str) -> Decision:
         """Classify a prompt for injection attempts.
