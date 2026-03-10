@@ -77,7 +77,10 @@ class GLiNERAnalyzer:
         if not _GLINER_AVAILABLE:
             return LinguisticSignals()
 
-        self._load_model()
+        try:
+            self._load_model()
+        except Exception:
+            return LinguisticSignals()
 
         try:
             raw_entities = self._model.predict_entities(  # type: ignore[union-attr]
