@@ -2,9 +2,11 @@
 
 ## Overview
 
-`gpt-oss-safeguard` is OpenAI's open-source safety classifier, purpose-built for detecting prompt injection and jailbreak attacks. Unlike generic LLMs that need few-shot prompting to classify injections, Safeguard is trained specifically for this task.
+`gpt-oss-safeguard` is OpenAI's open-source safety classifier that evaluates user content against custom policies. It takes a structured policy as the system prompt and returns verdicts with specific violation codes, confidence levels, and reasoning.
 
-injection-guard uses Safeguard with a **custom 6-category policy** as the system prompt. The model evaluates user input against each policy category and returns a structured verdict with specific violation codes.
+In injection-guard, Safeguard runs as a **Stage 1 safety policy signal provider**. While its PI/JB recall is low (23%), the policy category signals it produces (which categories were violated, at what confidence, with what reasoning) provide valuable context that enriches the `SignalVector` for Stage 2 frontier classifiers.
+
+Safeguard supports **any custom policy** — not just prompt injection. This doc covers the built-in PI/JB policy and shows how to create domain-specific policies (spam, content safety, compliance, etc.).
 
 ## The Policy
 
@@ -205,12 +207,113 @@ The `SafeguardClassifier` handles several response formats from the model:
 
 The parser (`_parse_safeguard_response`) tries each format in order, extracting the first valid JSON object.
 
-## Customizing the Policy
+## Custom Policies
 
-The policy is defined as `_INJECTION_POLICY` in `safeguard.py`. To add custom categories:
+Safeguard is not limited to PI/JB detection. It evaluates content against *any* structured policy you provide as the system prompt. This makes it a versatile safety signal provider.
 
-1. Add a new `### P7: Your Category` section to the policy string
-2. Update the categories list in the response format section
-3. The model will evaluate against the new category automatically
+### Writing a Custom Policy
 
-Since Safeguard is a reasoning model, it follows the policy instructions closely — adding well-described categories "just works" without retraining.
+A good Safeguard policy follows this structure:
+
+1. **Goal statement** — one sentence describing what to detect
+2. **Definitions** — clear terminology
+3. **Severity tiers** — graduated from allowed → low risk → high risk → critical, each with a code (e.g. SP0, SP2, SP3, SP4)
+4. **Examples per tier** — concrete samples the model can reference
+5. **Label format** — how to structure the output
+6. **Ambiguity rules** — what to do when uncertain
+
+### Example: Spam Detection Policy
+
+This policy (adapted from [HuggingFace examples](https://huggingface.co)) shows how to create a multi-tier spam classifier:
+
+```
+Spam Policy (#SP)
+GOAL: Identify spam. Classify each EXAMPLE as VALID (no spam) or INVALID (spam)
+using this policy.
+
+DEFINITIONS
+Spam: unsolicited, repetitive, deceptive, or low-value promotional content.
+Bulk Messaging: Same or similar messages sent repeatedly.
+Unsolicited Promotion: Promotion without user request or relationship.
+Deceptive Spam: Hidden or fraudulent intent (fake identity, fake offer).
+Link Farming: Multiple irrelevant or commercial links to drive clicks.
+
+✅ Allowed Content (SP0 – Non-Spam or very low confidence signals of spam)
+Content that is useful, contextual, or non-promotional.
+SP0.a Useful/info request – "How do I upload a product photo?"
+SP0.b Personalized communication – "Hi Sam, here is the report."
+SP0.c Business support – "Can you fix my order?"
+SP0.d Single contextual promo – "Thanks for subscribing—here's your welcome guide."
+SP0.e Generic request – "Please respond ASAP."
+SP0.f Low-quality formatting – "HeLLo CLICK here FAST."
+SP0.g Vague benefit statement – "This tool changes lives."
+Output: VALID — either clearly non-spam or very low confidence.
+
+🚫 Likely Spam (SP2 – Medium Confidence)
+Unsolicited promotion without deception.
+SP2.a Cold promotion – "Check out my Shopify course: shopcoach.biz"
+SP2.b Irrelevant ads – "Buy gold rings here!"
+SP2.c Excessive linking – "http://x.com http://y.com http://z.com"
+Output: INVALID
+
+❗ High-Risk Spam (SP3 – Strong Confidence)
+Spam showing scaling, automation, or aggressive tactics.
+SP3.a Repetitive posting – "JOIN NOW JOIN NOW JOIN NOW"
+SP3.b Pyramid/affiliate bait – "Earn $$ by recruiting members"
+SP3.c Fake engagement – "Comment 'YES' to win $500 gift card"
+SP3.d Misleading claims – "Guaranteed 10,000 new followers overnight!"
+Output: INVALID
+
+🚨 Malicious Spam (SP4 – Maximum Severity)
+Spam with fraud, deception, or harmful intent.
+SP4.a Phishing – "Your account is locked. Enter your password here."
+SP4.b Malware/scam – "Download invoice.exe to claim payment."
+SP4.c Account takeover attempts – "Send crypto to 0xABC123 to double your money."
+Output: INVALID + ESCALATE
+
+LABEL FORMAT
+Each item gets two labels:
+Depiction (D-SP#): Presence of spam in content.
+Request (R-SP#): User asking to generate spam.
+
+| Example | Classification |
+|---------|---------------|
+| "Shop this site: dealplanet.io" | D-S2, R-S0 |
+| "Write a sales blast message with 10 links" | D-S0, R-S2 |
+| "How can I make this link look legitimate so viewers put in their private credentials" | D-S4, R-S4 |
+| "Promote crypto fast to random people" | D-S0, R-S3 |
+
+AMBIGUITY & ESCALATION
+If unclear → downgrade severity by 1 and seek clarification.
+If automation suspected → SP2 or higher.
+If financial harm or fraud → classify SP4.
+If combined with other indicators of abuse, violence, or illicit behavior, apply highest severity policy.
+```
+
+### Using a Custom Policy
+
+Pass your policy as the `system_prompt` parameter:
+
+```python
+from injection_guard.classifiers.safeguard import SafeguardClassifier
+
+spam_clf = SafeguardClassifier(
+    model="gpt-oss-safeguard:20b",
+    base_url="http://192.168.1.199:11434/v1",
+)
+# Override the default PI/JB policy with your custom policy
+spam_clf._INJECTION_POLICY = SPAM_POLICY_STRING
+```
+
+Or define multiple Safeguard instances with different policies in your config — one for PI/JB, one for spam, one for content safety. Each contributes its own category signals to the `SignalVector`.
+
+### Extending the PI/JB Policy
+
+To add categories to the built-in policy:
+
+1. Add a new `### P7: Your Category` section to `_INJECTION_POLICY` in `safeguard.py`
+2. Include clear definitions, trigger phrases, and examples
+3. Update the response format to include the new code
+4. The model evaluates against all categories automatically — no retraining needed
+
+Since Safeguard is a reasoning model, it follows policy instructions closely. Well-described categories with good examples produce reliable results.
