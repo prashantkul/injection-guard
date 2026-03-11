@@ -170,15 +170,16 @@ See [docs/ner-signals.md](docs/ner-signals.md) for details on how GLiNER NER wor
 
 ## Classifiers
 
-### Pre-gate
+### Stage 1: Pre-gate + Pre-filter
 
-| Gate | Type | Accuracy | Precision | Role |
-|------|------|----------|-----------|------|
-| [Model Armor](docs/eval-results.md#model-armor--qualifire-dataset-200-samples) | GCP API | 58-75% | 89-95% | Pre-gate for high-confidence detections. FP rates vary by domain — evaluate on your traffic. |
+| Component | Type | Accuracy | Precision | Recall | Role |
+|-----------|------|----------|-----------|--------|------|
+| [Model Armor](docs/eval-results.md#model-armor--qualifire-dataset-200-samples) | GCP API | 58-75% | 89-95% | 18-56% | Optional pre-gate. FP rates vary by domain — evaluate on your traffic. |
+| [HF DeBERTa](docs/litguard-spec.md) | Local GPU | 65-70% | 59-71% | 65-99% | Fast pre-filter (~100ms). Fine-tunable on customer data. |
 
-Model Armor runs *before* classifiers as an optional pre-gate. Its high precision (89-95%) and low false positive rate (1-7%) make it safe to block immediately on high-confidence detections. See [docs/safeguard-policy.md](docs/safeguard-policy.md) for template configuration.
+Model Armor and DeBERTa run *before* frontier classifiers as Stage 1. Model Armor (optional, requires GCP) screens for high-confidence injections. DeBERTa provides fast local classification via [litguard](docs/litguard-spec.md) and can be [fine-tuned](docs/fine-tuning-strategy.md) per domain. Both results enrich the `SignalVector` passed to Stage 2 classifiers as supplementary context. See [docs/safeguard-policy.md](docs/safeguard-policy.md) for Model Armor template configuration.
 
-### Classifiers
+### Stage 2: Frontier Classifiers
 
 | Classifier | Type | Weight | Category | Accuracy | Approach |
 |------------|------|--------|----------|----------|----------|
