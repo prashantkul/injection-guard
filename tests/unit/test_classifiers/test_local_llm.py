@@ -5,11 +5,11 @@ import json
 
 from unittest.mock import AsyncMock, MagicMock
 
-from injection_guard.classifiers.local_llm import (
-    LocalLLMClassifier,
-    _extract_json,
-    _make_delimited_prompt,
-    _validate_result,
+from injection_guard.classifiers.local_llm import LocalLLMClassifier
+from injection_guard.classifiers.prompts import (
+    extract_json as _extract_json,
+    make_delimited_prompt as _make_delimited_prompt,
+    validate_result as _validate_result,
 )
 
 

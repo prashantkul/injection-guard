@@ -27,6 +27,7 @@ def _ensure_registry() -> None:
     from injection_guard.classifiers.openai import OpenAIClassifier
     from injection_guard.classifiers.gemini import GeminiClassifier
     from injection_guard.classifiers.local_llm import LocalLLMClassifier
+    from injection_guard.classifiers.safeguard import SafeguardClassifier
 
     _CLASSIFIER_REGISTRY.update({
         "regex": RegexPrefilter,
@@ -37,6 +38,7 @@ def _ensure_registry() -> None:
         "local_llm": LocalLLMClassifier,
         "ollama": LocalLLMClassifier,
         "vllm": LocalLLMClassifier,
+        "safeguard": SafeguardClassifier,
     })
 
 
@@ -162,14 +164,24 @@ def build_from_config(config: dict[str, Any]) -> dict[str, Any]:
     """
     kwargs: dict[str, Any] = {}
 
-    # Classifiers
+    # Classifiers — extract category before building
     clf_configs = config.get("classifiers", [])
-    classifiers = [_build_classifier(dict(c)) for c in clf_configs]
+    classifier_categories: dict[str, str] = {}
+    classifiers = []
+    for c in clf_configs:
+        c = dict(c)
+        category = c.pop("category", None)
+        clf = _build_classifier(c)
+        if category:
+            classifier_categories[clf.name] = category
+        classifiers.append(clf)
     kwargs["classifiers"] = classifiers
 
-    # Router
-    router_cfg = config.get("router", {"type": "cascade"})
-    kwargs["router"] = _build_router(dict(router_cfg))
+    # Router — inject classifier_categories if using parallel with category_quorum
+    router_cfg = dict(config.get("router", {"type": "cascade"}))
+    if classifier_categories and router_cfg.get("type") == "parallel":
+        router_cfg.setdefault("classifier_categories", classifier_categories)
+    kwargs["router"] = _build_router(router_cfg)
 
     # Thresholds
     if "thresholds" in config:

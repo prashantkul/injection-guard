@@ -114,6 +114,35 @@ class TestBuildFromConfig:
         kwargs = build_from_config(config)
         assert kwargs["router"] is not None
 
+    def test_config_with_category_quorum(self):
+        config = {
+            "classifiers": [
+                {"type": "regex", "category": "local"},
+                {"type": "openai", "model": "gpt-4o", "category": "api"},
+            ],
+            "router": {
+                "type": "parallel",
+                "timeout_ms": 5000,
+                "category_quorum": {"local": 1, "api": 1},
+            },
+        }
+        kwargs = build_from_config(config)
+        router = kwargs["router"]
+        assert router._config.category_quorum == {"local": 1, "api": 1}
+        assert "regex-prefilter" in router._config.classifier_categories
+        assert router._config.classifier_categories["regex-prefilter"] == "local"
+
+    def test_category_not_injected_for_cascade(self):
+        config = {
+            "classifiers": [
+                {"type": "regex", "category": "local"},
+            ],
+            "router": {"type": "cascade"},
+        }
+        kwargs = build_from_config(config)
+        # Cascade router doesn't use categories — should still build fine
+        assert kwargs["router"] is not None
+
     def test_unknown_classifier_type_raises(self):
         config = {
             "classifiers": [{"type": "unknown_thing"}],

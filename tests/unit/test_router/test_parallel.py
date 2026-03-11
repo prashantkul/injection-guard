@@ -92,3 +92,83 @@ class TestTimeout:
         # Quorum of 10 can never be met with 2 classifiers, but both should finish
         # before the timeout since they are instant
         assert len(results) == 2
+
+
+class TestCategoryQuorum:
+    """Test category-based quorum logic."""
+
+    async def test_category_quorum_met(self, make_classifier):
+        config = ParallelConfig(
+            timeout_ms=2000,
+            category_quorum={"local": 1, "api": 1},
+            classifier_categories={
+                "local-a": "local",
+                "api-a": "api",
+                "api-b": "api",
+            },
+        )
+        router = ParallelRouter(config)
+
+        clf_local = make_classifier(name="local-a", score=0.9, label="injection")
+        clf_api_a = make_classifier(name="api-a", score=0.8, label="injection")
+        clf_api_b = make_classifier(name="api-b", score=0.7, label="injection")
+
+        results = await router.route([clf_local, clf_api_a, clf_api_b], "test")
+
+        assert len(results) >= 2
+        names = {name for name, _ in results}
+        assert "local-a" in names
+        # At least one api classifier responded
+        assert names & {"api-a", "api-b"}
+
+    async def test_category_quorum_waits_for_all_categories(self, make_classifier):
+        """If only one category responds, quorum is not met."""
+        config = ParallelConfig(
+            timeout_ms=300,
+            category_quorum={"local": 1, "api": 1},
+            classifier_categories={
+                "fast-local": "local",
+                "slow-api": "api",
+            },
+        )
+        router = ParallelRouter(config)
+
+        clf_fast = make_classifier(name="fast-local", score=0.9, label="injection")
+        # Slow classifier that won't respond before timeout
+        clf_slow = make_classifier(name="slow-api", score=0.8, label="injection", delay=0.5)
+
+        results = await router.route([clf_fast, clf_slow], "test")
+
+        # Timeout hit — only fast-local responded, category quorum not met
+        assert len(results) >= 1
+
+    async def test_category_quorum_ignores_simple_quorum(self, make_classifier):
+        """When category_quorum is set, simple quorum field is ignored."""
+        config = ParallelConfig(
+            timeout_ms=2000,
+            quorum=99,  # Would never be met
+            category_quorum={"local": 1, "api": 1},
+            classifier_categories={
+                "clf-local": "local",
+                "clf-api": "api",
+            },
+        )
+        router = ParallelRouter(config)
+
+        clf_a = make_classifier(name="clf-local", score=0.9, label="injection")
+        clf_b = make_classifier(name="clf-api", score=0.8, label="injection")
+
+        results = await router.route([clf_a, clf_b], "test")
+
+        # Category quorum met (1 local + 1 api), simple quorum=99 ignored
+        assert len(results) == 2
+
+    async def test_category_quorum_met_static_method(self):
+        from collections import Counter
+
+        counts = Counter({"local": 1, "api": 2})
+        required = {"local": 1, "api": 1}
+        assert ParallelRouter._category_quorum_met(counts, required) is True
+
+        counts_partial = Counter({"local": 1})
+        assert ParallelRouter._category_quorum_met(counts_partial, required) is False

@@ -11,12 +11,13 @@ from injection_guard.preprocessor.encoding import EncodingDetector
 from injection_guard.preprocessor.structural import StructuralAnalyzer
 from injection_guard.preprocessor.token import TokenBoundaryDetector
 from injection_guard.preprocessor.gliner import GLiNERAnalyzer
+from injection_guard.preprocessor.regex import RegexAnalyzer
 
 __all__ = ["Preprocessor"]
 
 
 class Preprocessor:
-    """Runs the five-stage preprocessor pipeline and computes a risk prior.
+    """Runs the six-stage preprocessor pipeline and computes a risk prior.
 
     Stages:
         1. Unicode normalization (always)
@@ -24,19 +25,27 @@ class Preprocessor:
         3. Structural analysis (always)
         4. Token boundary detection (always)
         5. GLiNER semantic analysis (only if the library is installed)
+        6. Regex pattern matching for known injection patterns
     """
 
-    def __init__(self, *, gliner_model: str = "urchade/gliner_base") -> None:
+    def __init__(
+        self,
+        *,
+        gliner_model: str = "urchade/gliner_base",
+        extra_regex_patterns: list[str] | None = None,
+    ) -> None:
         """Initialise the preprocessor with its sub-analyzers.
 
         Args:
             gliner_model: HuggingFace model name for the GLiNER stage.
+            extra_regex_patterns: Additional regex patterns for Stage 6.
         """
         self._unicode = UnicodeNormalizer()
         self._encoding = EncodingDetector()
         self._structural = StructuralAnalyzer()
         self._token = TokenBoundaryDetector()
         self._gliner = GLiNERAnalyzer(model_name=gliner_model)
+        self._regex = RegexAnalyzer(extra_patterns=extra_regex_patterns)
 
     def process(self, prompt: str) -> PreprocessorOutput:
         """Run all preprocessing stages on *prompt*.
@@ -63,12 +72,16 @@ class Preprocessor:
         # Stage 5: GLiNER (optional)
         linguistic_signals = self._gliner.analyze(normalized)
 
+        # Stage 6: Regex pattern matching
+        regex_signals = self._regex.analyze(normalized)
+
         signals = SignalVector(
             unicode=unicode_signals,
             encoding=encoding_signals,
             structural=structural_signals,
             token=token_signals,
             linguistic=linguistic_signals,
+            regex=regex_signals,
         )
 
         risk_prior = self._compute_risk_prior(signals)
@@ -127,5 +140,13 @@ class Preprocessor:
             and "role assignment" in signals.linguistic.entity_types_found
         ):
             score += 0.3
+
+        # Regex signals
+        if signals.regex.match_count >= 3:
+            score += 0.7
+        elif signals.regex.match_count >= 2:
+            score += 0.5
+        elif signals.regex.match_count == 1:
+            score += 0.4
 
         return min(1.0, score)

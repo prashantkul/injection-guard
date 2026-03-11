@@ -6,11 +6,11 @@ import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from injection_guard.classifiers.anthropic import (
-    AnthropicClassifier,
-    _extract_json,
-    _make_delimited_prompt,
-    _validate_result,
+from injection_guard.classifiers.anthropic import AnthropicClassifier
+from injection_guard.classifiers.prompts import (
+    extract_json as _extract_json,
+    make_delimited_prompt as _make_delimited_prompt,
+    validate_result as _validate_result,
 )
 
 

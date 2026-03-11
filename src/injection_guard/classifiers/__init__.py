@@ -9,6 +9,8 @@ from injection_guard.classifiers.anthropic import AnthropicClassifier
 from injection_guard.classifiers.openai import OpenAIClassifier
 from injection_guard.classifiers.gemini import GeminiClassifier
 from injection_guard.classifiers.local_llm import LocalLLMClassifier
+from injection_guard.classifiers.safeguard import SafeguardClassifier
+from injection_guard.classifiers.hf_compat import HFCompatClassifier
 
 __all__ = [
     "BaseClassifier",
@@ -19,4 +21,6 @@ __all__ = [
     "OpenAIClassifier",
     "GeminiClassifier",
     "LocalLLMClassifier",
+    "SafeguardClassifier",
+    "HFCompatClassifier",
 ]

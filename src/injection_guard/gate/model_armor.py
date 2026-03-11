@@ -45,6 +45,19 @@ class ModelArmorGate:
     )
     fail_mode: Literal["open", "closed"] = "closed"
     enabled: bool = True
+    _client: object = field(default=None, init=False, repr=False)
+
+    def _get_client(self):
+        """Lazily create and cache the Model Armor async client."""
+        if self._client is not None:
+            return self._client
+        from google.cloud import modelarmor_v1  # type: ignore[import-untyped]
+        from google.api_core.client_options import ClientOptions  # type: ignore[import-untyped]
+        endpoint = f"modelarmor.{self.location}.rep.googleapis.com"
+        self._client = modelarmor_v1.ModelArmorAsyncClient(
+            client_options=ClientOptions(api_endpoint=endpoint),
+        )
+        return self._client
 
     async def screen(self, prompt: str) -> ModelArmorResult:
         """Screen a prompt through Google Cloud Model Armor.
@@ -73,7 +86,7 @@ class ModelArmorGate:
             )
 
         try:
-            client = modelarmor_v1.ModelArmorAsyncClient()
+            client = self._get_client()
 
             template_name = (
                 f"projects/{self.project_id}/locations/{self.location}"
@@ -82,7 +95,7 @@ class ModelArmorGate:
 
             request = modelarmor_v1.SanitizeUserPromptRequest(
                 name=template_name,
-                user_prompt_data=modelarmor_v1.UserPromptData(
+                user_prompt_data=modelarmor_v1.DataItem(
                     text=prompt,
                 ),
             )
@@ -156,49 +169,59 @@ class ModelArmorGate:
             return result
 
         filter_results = getattr(sanitization, "filter_results", None)
-        if filter_results is None:
+        if not filter_results:
             return result
 
+        # SDK v0.4+ returns filter_results as a map (dict-like).
+        # Support both dict-style .get() and older attribute access.
+        def _get_filter(key: str) -> object | None:
+            if hasattr(filter_results, "get"):
+                return filter_results.get(key)
+            return getattr(filter_results, key, None)
+
+        # Confidence level enum → name mapping
+        _CONF_NAMES = {0: "UNSPECIFIED", 1: "LOW", 2: "MEDIUM", 3: "HIGH"}
+
         # --- Prompt injection & jailbreak ---
-        pi_result = getattr(filter_results, "pi_and_jailbreak", None)
-        if pi_result is not None:
+        pi_filter = _get_filter("pi_and_jailbreak")
+        if pi_filter is not None:
+            pi_result = getattr(pi_filter, "pi_and_jailbreak_filter_result", pi_filter)
             match_state = getattr(pi_result, "match_state", None)
             confidence = getattr(pi_result, "confidence_level", None)
-            confidence_name = (
-                confidence.name if hasattr(confidence, "name") else str(confidence)
+
+            # Resolve enum to string name
+            if isinstance(confidence, int):
+                confidence_name = _CONF_NAMES.get(confidence, str(confidence))
+            elif hasattr(confidence, "name"):
+                confidence_name = confidence.name
+            else:
+                confidence_name = str(confidence)
+
+            # match_state == 2 means MATCH_FOUND in the proto enum
+            is_match = (match_state == 2) if isinstance(match_state, int) else (
+                "MATCH_FOUND" in str(match_state)
             )
 
-            if str(match_state) != "NO_MATCH" and confidence_name in allowed_levels:
+            if is_match and confidence_name in allowed_levels:
                 result.match_found = True
                 result.pi_and_jailbreak = True
                 result.confidence_level = confidence_name
 
         # --- Malicious URIs ---
-        url_result = getattr(filter_results, "malicious_uris", None)
-        if url_result is not None:
+        url_filter = _get_filter("malicious_uris")
+        if url_filter is not None:
+            url_result = getattr(url_filter, "malicious_uri_filter_result", url_filter)
             uris = getattr(url_result, "malicious_uris", []) or []
             if uris:
                 result.match_found = True
                 result.malicious_urls = list(uris)
 
-        # --- Sensitive data protection ---
-        sdp_result = getattr(filter_results, "sdp", None)
-        if sdp_result is not None:
-            findings = getattr(sdp_result, "inspection_result", None)
-            if findings:
-                sdp_items = getattr(findings, "findings", []) or []
-                result.sdp_findings = [
-                    getattr(f, "info_type", str(f)) for f in sdp_items
-                ]
-                if result.sdp_findings:
-                    result.match_found = True
-
         # --- Responsible AI ---
-        rai_result = getattr(filter_results, "rai", None)
-        if rai_result is not None:
+        rai_filter = _get_filter("rai")
+        if rai_filter is not None:
             rai_dict: dict = {}
             try:
-                rai_dict = type(rai_result).to_dict(rai_result)  # type: ignore[attr-defined]
+                rai_dict = type(rai_filter).to_dict(rai_filter)  # type: ignore[attr-defined]
             except Exception:  # noqa: BLE001
                 pass
             if rai_dict:

@@ -1,9 +1,13 @@
 """Parallel router — fires all classifiers concurrently, returns on quorum.
 
-All classifiers are launched as concurrent asyncio tasks.  As soon as enough
-classifiers agree on the same label (the *quorum*), remaining tasks are
-cancelled and results are returned.  Individual classifier failures are
-handled gracefully and never propagate.
+All classifiers are launched as concurrent asyncio tasks.  Supports two
+quorum modes:
+
+1. **Simple quorum**: Wait for N classifiers to agree on the same label.
+2. **Category quorum**: Wait for at least N responses per category
+   (e.g. 1 from "local", 1 from "api").
+
+Individual classifier failures are handled gracefully and never propagate.
 """
 
 from __future__ import annotations
@@ -28,17 +32,17 @@ class ParallelRouter:
     """Routes prompts to all classifiers in parallel, returning on quorum.
 
     Every classifier is invoked concurrently.  The router collects results as
-    they arrive and checks whether ``config.quorum`` classifiers agree on the
-    same label.  Once quorum is reached the remaining in-flight tasks are
-    cancelled.
+    they arrive and checks the quorum condition.  Once satisfied, remaining
+    in-flight tasks are cancelled.
 
     Args:
         config: A ``ParallelConfig`` instance controlling the timeout, retry
-            policy, and quorum size.
+            policy, and quorum size / category quorum.
     """
 
     def __init__(self, config: ParallelConfig) -> None:
         self._config = config
+        self._use_categories = bool(config.category_quorum)
 
     async def route(
         self,
@@ -66,15 +70,14 @@ class ParallelRouter:
 
         results: list[tuple[str, ClassifierResult]] = []
         label_counts: Counter[str] = Counter()
+        category_counts: Counter[str] = Counter()
         quorum_event = asyncio.Event()
         timeout_s = self._config.timeout_ms / 1000.0
+        cat_map = self._config.classifier_categories
+        cat_quorum = self._config.category_quorum
 
         async def _run(clf: BaseClassifier) -> None:
-            """Execute a single classifier and record its result.
-
-            Args:
-                clf: The classifier to run.
-            """
+            """Execute a single classifier and record its result."""
             try:
                 result = await clf.classify(prompt, signals)
             except asyncio.CancelledError:
@@ -88,8 +91,18 @@ class ParallelRouter:
             results.append((clf.name, result))
             label_counts[result.label] += 1
 
-            if label_counts[result.label] >= self._config.quorum:
-                quorum_event.set()
+            # Track category completion
+            category = cat_map.get(clf.name, "")
+            if category:
+                category_counts[category] += 1
+
+            # Check quorum
+            if self._use_categories:
+                if self._category_quorum_met(category_counts, cat_quorum):
+                    quorum_event.set()
+            else:
+                if label_counts[result.label] >= self._config.quorum:
+                    quorum_event.set()
 
         tasks = [asyncio.create_task(_run(clf)) for clf in classifiers]
 
@@ -112,3 +125,13 @@ class ParallelRouter:
             await asyncio.gather(*tasks, return_exceptions=True)
 
         return results
+
+    @staticmethod
+    def _category_quorum_met(
+        counts: Counter[str], required: dict[str, int]
+    ) -> bool:
+        """Check if all category quorum requirements are satisfied."""
+        return all(
+            counts.get(cat, 0) >= min_count
+            for cat, min_count in required.items()
+        )

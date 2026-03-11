@@ -14,6 +14,7 @@ __all__ = [
     "TokenSignals",
     "EntityMatch",
     "LinguisticSignals",
+    "RegexSignals",
     "SignalVector",
     "PreprocessorOutput",
     "ClassifierResult",
@@ -111,6 +112,15 @@ class LinguisticSignals:
 
 
 @dataclass
+class RegexSignals:
+    """Signals from Stage 6: Regex pattern matching for known injection patterns."""
+
+    matched_patterns: list[str] = field(default_factory=list)
+    matched_texts: list[str] = field(default_factory=list)
+    match_count: int = 0
+
+
+@dataclass
 class SignalVector:
     """Combined signals from all preprocessor stages."""
 
@@ -119,6 +129,7 @@ class SignalVector:
     structural: StructuralSignals = field(default_factory=StructuralSignals)
     token: TokenSignals = field(default_factory=TokenSignals)
     linguistic: LinguisticSignals = field(default_factory=LinguisticSignals)
+    regex: RegexSignals = field(default_factory=RegexSignals)
 
 
 @dataclass
@@ -183,9 +194,21 @@ class CascadeConfig(RouterConfig):
 
 @dataclass
 class ParallelConfig(RouterConfig):
-    """Parallel router configuration."""
+    """Parallel router configuration.
+
+    Supports two quorum modes:
+
+    1. **Simple quorum**: ``quorum=3`` — any 3 classifiers must respond.
+    2. **Category quorum**: ``category_quorum={"local": 1, "api": 1}`` — at
+       least 1 from each category must respond. Classifiers are assigned to
+       categories via ``classifier_categories``.
+
+    When ``category_quorum`` is set, the simple ``quorum`` is ignored.
+    """
 
     quorum: int = 2
+    category_quorum: dict[str, int] = field(default_factory=dict)
+    classifier_categories: dict[str, str] = field(default_factory=dict)
 
 
 # === Threshold Types ===

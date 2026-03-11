@@ -23,7 +23,7 @@ from injection_guard.types import (
     ParallelConfig,
 )
 
-from tests.conftest import ATTACK_PAYLOADS, BENIGN_PAYLOADS, MockClassifier
+from tests.unit.conftest import ATTACK_PAYLOADS, BENIGN_PAYLOADS, MockClassifier
 
 
 # ---------------------------------------------------------------------------

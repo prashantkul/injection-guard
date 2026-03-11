@@ -17,6 +17,10 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
+    "anthropic>=0.84.0",
+    "google-cloud-aiplatform>=1.140.0",
+    "google-cloud-modelarmor>=0.4.0",
+    "openai>=1.68",
     "pydantic>=2.0",
     "python-dotenv>=1.0.0",
     "pyyaml>=6.0.3",
@@ -60,6 +64,9 @@ dev = [
 ]
 all = ["injection-guard[api,local,gliner,gcp,eval]"]
 
+[project.scripts]
+injection-guard = "injection_guard.cli:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -72,6 +79,7 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
     "benchmark: tests that download HuggingFace datasets (deselect with -m 'not benchmark')",
+    "integration: tests that require API keys or external services",
 ]
 
 [tool.ruff]
@@ -86,4 +94,5 @@ strict = true
 dev = [
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
+    "pytest-timeout>=2.4.0",
 ]
