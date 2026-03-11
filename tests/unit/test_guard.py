@@ -12,16 +12,22 @@ from injection_guard.types import (
     ClassifierResult,
     ModelArmorResult,
     PreprocessorOutput,
+    RouteResult,
     SignalVector,
 )
 
 from tests.conftest import MockClassifier
 
 
-def _make_mock_router(results: list[tuple[str, ClassifierResult]]):
+def _make_mock_router(
+    results: list[tuple[str, ClassifierResult]],
+    quorum_met: bool = True,
+):
     """Create a mock router that returns the given results."""
     router = MagicMock()
-    router.route = AsyncMock(return_value=results)
+    router.route = AsyncMock(
+        return_value=RouteResult(results=results, quorum_met=quorum_met)
+    )
     return router
 
 
@@ -167,6 +173,44 @@ class TestModelArmorIntegration:
         decision = await guard.classify("attack text")
         assert decision.action == Action.BLOCK
         assert "model-armor-block" in decision.router_path
+
+
+class TestQuorumFailureFallback:
+    """Test that quorum failure triggers a fail-closed BLOCK."""
+
+    async def test_quorum_not_met_blocks(self, make_classifier):
+        clf = make_classifier(name="clf", score=0.1, label="benign", tier="fast")
+        router = _make_mock_router(
+            results=[("clf", ClassifierResult(score=0.1, label="benign", confidence=0.9))],
+            quorum_met=False,
+        )
+
+        guard = InjectionGuard(
+            classifiers=[clf],
+            router=router,
+            thresholds={"block": 0.85, "flag": 0.50},
+        )
+
+        decision = await guard.classify("Hello world")
+        assert decision.action == Action.BLOCK
+        assert decision.degraded is True
+
+    async def test_quorum_met_allows(self, make_classifier):
+        clf = make_classifier(name="clf", score=0.1, label="benign", tier="fast")
+        router = _make_mock_router(
+            results=[("clf", ClassifierResult(score=0.1, label="benign", confidence=0.9))],
+            quorum_met=True,
+        )
+
+        guard = InjectionGuard(
+            classifiers=[clf],
+            router=router,
+            thresholds={"block": 0.85, "flag": 0.50},
+        )
+
+        decision = await guard.classify("Hello world")
+        assert decision.action == Action.ALLOW
+        assert decision.degraded is False
 
 
 class TestDecisionAuditTrail:

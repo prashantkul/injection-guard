@@ -20,6 +20,7 @@ from injection_guard.types import (
     BaseClassifier,
     ClassifierResult,
     ParallelConfig,
+    RouteResult,
     SignalVector,
 )
 
@@ -50,7 +51,7 @@ class ParallelRouter:
         prompt: str,
         signals: SignalVector | None = None,
         risk_prior: float = 0.0,
-    ) -> list[tuple[str, ClassifierResult]]:
+    ) -> RouteResult:
         """Run all classifiers concurrently and return on quorum or timeout.
 
         Args:
@@ -61,12 +62,11 @@ class ParallelRouter:
                 router but accepted for interface compatibility).
 
         Returns:
-            A list of ``(classifier_name, ClassifierResult)`` tuples for every
-            classifier that completed before the quorum was met or the global
-            timeout expired.
+            A ``RouteResult`` containing per-classifier results and whether
+            the quorum requirement was satisfied.
         """
         if not classifiers:
-            return []
+            return RouteResult(results=[], quorum_met=True)
 
         results: list[tuple[str, ClassifierResult]] = []
         label_counts: Counter[str] = Counter()
@@ -106,8 +106,10 @@ class ParallelRouter:
 
         tasks = [asyncio.create_task(_run(clf)) for clf in classifiers]
 
+        quorum_reached = False
         try:
             await asyncio.wait_for(quorum_event.wait(), timeout=timeout_s)
+            quorum_reached = True
         except asyncio.TimeoutError:
             logger.warning(
                 "Parallel router timed out after %.0f ms with %d/%d results",
@@ -124,7 +126,7 @@ class ParallelRouter:
             # Wait for cancellation to propagate so we don't leak tasks.
             await asyncio.gather(*tasks, return_exceptions=True)
 
-        return results
+        return RouteResult(results=results, quorum_met=quorum_reached)
 
     @staticmethod
     def _category_quorum_met(

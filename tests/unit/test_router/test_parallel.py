@@ -27,11 +27,12 @@ class TestQuorumMet:
         clf_b = make_classifier(name="b", score=0.8, label="injection")
         clf_c = make_classifier(name="c", score=0.1, label="benign")
 
-        results = await router.route([clf_a, clf_b, clf_c], "test text")
+        route = await router.route([clf_a, clf_b, clf_c], "test text")
 
         # At least 2 results should be present (quorum met on "injection")
-        assert len(results) >= 2
-        injection_count = sum(1 for _, r in results if r.label == "injection")
+        assert len(route.results) >= 2
+        assert route.quorum_met is True
+        injection_count = sum(1 for _, r in route.results if r.label == "injection")
         assert injection_count >= 2
 
     async def test_quorum_of_two_benign(self, router, make_classifier):
@@ -39,10 +40,11 @@ class TestQuorumMet:
         clf_b = make_classifier(name="b", score=0.2, label="benign")
         clf_c = make_classifier(name="c", score=0.9, label="injection")
 
-        results = await router.route([clf_a, clf_b, clf_c], "normal text")
+        route = await router.route([clf_a, clf_b, clf_c], "normal text")
 
-        assert len(results) >= 2
-        benign_count = sum(1 for _, r in results if r.label == "benign")
+        assert len(route.results) >= 2
+        assert route.quorum_met is True
+        benign_count = sum(1 for _, r in route.results if r.label == "benign")
         assert benign_count >= 2
 
 
@@ -54,10 +56,10 @@ class TestClassifierFailure:
         clf_ok_b = make_classifier(name="ok-b", score=0.8, label="injection")
         clf_fail = make_classifier(name="fail", should_fail=True)
 
-        results = await router.route([clf_ok_a, clf_ok_b, clf_fail], "test")
+        route = await router.route([clf_ok_a, clf_ok_b, clf_fail], "test")
 
-        assert len(results) >= 2
-        names = [name for name, _ in results]
+        assert len(route.results) >= 2
+        names = [name for name, _ in route.results]
         assert "fail" not in names
 
     async def test_all_fail_returns_empty(self, make_classifier):
@@ -65,17 +67,19 @@ class TestClassifierFailure:
         clf_a = make_classifier(name="a", should_fail=True)
         clf_b = make_classifier(name="b", should_fail=True)
 
-        results = await router.route([clf_a, clf_b], "test")
+        route = await router.route([clf_a, clf_b], "test")
 
-        assert results == []
+        assert route.results == []
+        assert route.quorum_met is False
 
 
 class TestEmptyClassifiers:
     """Test routing with no classifiers."""
 
     async def test_empty_list(self, router):
-        results = await router.route([], "test")
-        assert results == []
+        route = await router.route([], "test")
+        assert route.results == []
+        assert route.quorum_met is True
 
 
 class TestTimeout:
@@ -87,11 +91,12 @@ class TestTimeout:
         clf_a = make_classifier(name="a", score=0.9, label="injection")
         clf_b = make_classifier(name="b", score=0.8, label="injection")
 
-        results = await router.route([clf_a, clf_b], "test")
+        route = await router.route([clf_a, clf_b], "test")
 
         # Quorum of 10 can never be met with 2 classifiers, but both should finish
         # before the timeout since they are instant
-        assert len(results) == 2
+        assert len(route.results) == 2
+        assert route.quorum_met is False
 
 
 class TestCategoryQuorum:
@@ -113,10 +118,11 @@ class TestCategoryQuorum:
         clf_api_a = make_classifier(name="api-a", score=0.8, label="injection")
         clf_api_b = make_classifier(name="api-b", score=0.7, label="injection")
 
-        results = await router.route([clf_local, clf_api_a, clf_api_b], "test")
+        route = await router.route([clf_local, clf_api_a, clf_api_b], "test")
 
-        assert len(results) >= 2
-        names = {name for name, _ in results}
+        assert len(route.results) >= 2
+        assert route.quorum_met is True
+        names = {name for name, _ in route.results}
         assert "local-a" in names
         # At least one api classifier responded
         assert names & {"api-a", "api-b"}
@@ -137,10 +143,11 @@ class TestCategoryQuorum:
         # Slow classifier that won't respond before timeout
         clf_slow = make_classifier(name="slow-api", score=0.8, label="injection", delay=0.5)
 
-        results = await router.route([clf_fast, clf_slow], "test")
+        route = await router.route([clf_fast, clf_slow], "test")
 
         # Timeout hit — only fast-local responded, category quorum not met
-        assert len(results) >= 1
+        assert len(route.results) >= 1
+        assert route.quorum_met is False
 
     async def test_category_quorum_ignores_simple_quorum(self, make_classifier):
         """When category_quorum is set, simple quorum field is ignored."""
@@ -158,10 +165,11 @@ class TestCategoryQuorum:
         clf_a = make_classifier(name="clf-local", score=0.9, label="injection")
         clf_b = make_classifier(name="clf-api", score=0.8, label="injection")
 
-        results = await router.route([clf_a, clf_b], "test")
+        route = await router.route([clf_a, clf_b], "test")
 
         # Category quorum met (1 local + 1 api), simple quorum=99 ignored
-        assert len(results) == 2
+        assert len(route.results) == 2
+        assert route.quorum_met is True
 
     async def test_category_quorum_met_static_method(self):
         from collections import Counter

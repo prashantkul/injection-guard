@@ -12,11 +12,11 @@
 
 Two-stage prompt injection detection system with an ensemble classifier architecture. 
 
-**Stage 1** (pre-gate + pre-filter) uses Google Cloud Model Armor and fine-tunable DeBERTa models for fast, high-recall local detection (~100-200ms). 
+**Stage 1** runs fast local models (~100-200ms) — Model Armor and DeBERTa for PI/JB signals, Safeguard for configurable safety policy signals — and enriches the `SignalVector` with their results.
 
-**Stage 2** (frontier ensemble) escalates ambiguous cases to API classifiers (OpenAI, Anthropic, Gemini) for high-accuracy classification. 
+**Stage 2** runs frontier API classifiers (OpenAI, Anthropic, Gemini) on **every prompt**, receiving enriched signals from Stage 1 as additional context for high-accuracy classification.
 
-Built with async-first Python 3.10+. A 6-stage preprocessor pipeline (Unicode normalization, encoding detection, structural analysis, token boundary detection, GLiNER NER entity extraction, and regex pattern matching) extracts a `SignalVector` from each prompt before classification. The cascade router runs classifiers tier-by-tier — fast local models first, frontier APIs only when needed — with early exit on high-confidence results to minimize latency and cost.
+Built with async-first Python 3.10+. A 6-stage preprocessor pipeline (Unicode normalization, encoding detection, structural analysis, token boundary detection, GLiNER NER entity extraction, and regex pattern matching) extracts a `SignalVector` from each prompt before classification. Stage 1 never short-circuits — it provides signal enrichment only. The cascade router runs Stage 2 classifiers tier-by-tier with quorum-based aggregation.
 
 ## Architecture
 
@@ -42,24 +42,25 @@ block-beta
     BP["Signal Extraction"]
   end
 
-  block:fast:1
+  block:stage1:1
     columns 1
-    style fast fill:#065f46,color:#fff,stroke:#047857
-    F["Pre-gate + Pre-filter"]
-    F0["Model Armor (GCP)"]
-    F1["DeBERTa (fine-tunable)"]
-    F2["~100-200ms"]
-    FP["High recall, fast exit"]
+    style stage1 fill:#065f46,color:#fff,stroke:#047857
+    S1["Stage 1"]
+    S1A["Model Armor (PI/JB)"]
+    S1B["DeBERTa (PI/JB)"]
+    S1C["Safeguard (Policy)"]
+    S1D["~100-200ms"]
+    S1P["SignalVector Enrichment"]
   end
 
-  block:classify:1
+  block:stage2:1
     columns 1
-    style classify fill:#2c5282,color:#fff,stroke:#2b6cb0
-    C["Parallel Router"]
-    C1["OpenAI"]
-    C2["Anthropic"]
-    C3["Gemini"]
-    CP["Ensemble Classification"]
+    style stage2 fill:#2c5282,color:#fff,stroke:#2b6cb0
+    S2["Stage 2"]
+    S2A["OpenAI"]
+    S2B["Anthropic"]
+    S2C["Gemini"]
+    S2P["Frontier Ensemble"]
   end
 
   block:decide:1
@@ -81,75 +82,61 @@ block-beta
   end
 
   A --> B
-  B --> F
-  F --> C
-  C --> D
+  B --> S1
+  S1 --> S2
+  S2 --> D
   D --> E1
 ```
 
 ## How It Works
 
 ```mermaid
-flowchart LR
-  subgraph Preprocessor
-    direction TB
-    P1["1. Unicode"] --> P2["2. Encoding"]
-    P2 --> P3["3. Structural"]
-    P3 --> P4["4. Token"]
-    P4 --> P5["5. GLiNER NER"]
-    P5 --> P6["6. Regex"]
+flowchart TD
+  subgraph Preprocessor["Preprocessor (6 stages)"]
+    direction LR
+    P1["Unicode"] --> P2["Encoding"] --> P3["Structural"] --> P4["Token"] --> P5["GLiNER NER"] --> P6["Regex"]
   end
 
-  subgraph Signals
-    direction TB
-    SV["SignalVector"]
-    RP["risk_prior"]
+  Preprocessor --> SV["SignalVector + risk_prior"]
+  SV --> Stage1
+
+  subgraph Stage1["Stage 1: Signal Enrichment (~100-200ms)"]
+    direction LR
+    MA["Model Armor\n(PI/JB signal)"] ~~~ HF["DeBERTa\n(PI/JB signal)"] ~~~ SG["Safeguard\n(Safety policy)"]
   end
 
-  subgraph Pre-filter
-    direction TB
-    MA["Model Armor (GCP)"]
-    MA -->|"pass"| HF["DeBERTa (fine-tuned)"]
-    MA -->|"BLOCK\n(high confidence)"| Decision
+  Stage1 -->|"enrich SignalVector\n(no early exit)"| Stage2
+
+  subgraph Stage2["Stage 2: Frontier Ensemble (every prompt)"]
+    direction LR
+    S2A["OpenAI\n(+ reasoning)"] ~~~ S2B["Anthropic"] ~~~ S2C["Gemini"]
   end
 
-  subgraph Router
-    direction TB
-    R1["Launch frontier classifiers"]
-    R2["Wait for category quorum"]
-    R3["Cancel remaining"]
-  end
+  Stage2 --> DEC
 
-  subgraph Decision
-    direction TB
-    AG["Weighted Aggregation"]
-    TH["Threshold Check"]
+  subgraph DEC["Decision"]
+    direction LR
+    AG["Weighted\nAggregation"] --> TH["Threshold\nCheck"] --> OUT["ALLOW | FLAG | BLOCK"]
   end
-
-  Preprocessor --> Signals
-  Signals --> Pre-filter
-  Pre-filter -->|"high confidence\nbenign"| Decision
-  Pre-filter -->|"uncertain or\ninjection"| Router
-  Router --> Decision
 
   style Preprocessor fill:#2d3748,color:#e2e8f0
-  style Signals fill:#553c9a,color:#e9d8fd
-  style Pre-filter fill:#065f46,color:#d1fae5
-  style Router fill:#2c5282,color:#bee3f8
-  style Decision fill:#2f855a,color:#c6f6d5
+  style Stage1 fill:#065f46,color:#d1fae5
+  style Stage2 fill:#2c5282,color:#bee3f8
+  style DEC fill:#2f855a,color:#c6f6d5
 ```
 
 ### Recommended Ensemble Strategy
 
 The architecture uses a **tiered approach** optimized from [eval results](docs/eval-results.md) on the Qualifire benchmark:
 
-1. **Pre-gate (Model Armor)** — Google Cloud Model Armor screens prompts first (~180ms). High-confidence injections are blocked immediately. Low false positive rate on general benchmarks (1-7%), though domain-specific traffic may see higher FP rates — test with your data. Optional — requires GCP.
-2. **Fast pre-filter (DeBERTa)** — Fine-tunable DeBERTa model (~100ms on GPU, 99% recall) catches remaining obvious injections and short-circuits high-confidence benign prompts. Customers can [fine-tune](docs/fine-tuning-strategy.md) this model on their domain data.
-3. **SignalVector enrichment** — Stage 1 results (DeBERTa score/label/confidence, Model Armor verdict/categories) are added to the `SignalVector` and passed as context to Stage 2 classifiers. Frontier models see what the fast local models already detected, enabling them to focus on resolving ambiguity rather than re-classifying from scratch.
-4. **Frontier ensemble** — For uncertain cases, the cascade/parallel router fires frontier API classifiers (Anthropic, OpenAI with reasoning, Gemini) and waits for quorum. These receive enriched signals and provide 80-84% accuracy with nuanced scoring.
-4. **Weighted aggregation** — The aggregator combines all scores using learned weights, then applies threshold engine for ALLOW/FLAG/BLOCK.
+1. **Model Armor (PI/JB signal)** — Google Cloud Model Armor evaluates prompts (~180ms). Its verdict and confidence are added to the SignalVector. Optional — requires GCP.
+2. **DeBERTa (PI/JB signal)** — Fine-tunable DeBERTa model (~100ms on GPU) provides fast local PI/JB classification. Score, label, and confidence are added to the SignalVector. Customers can [fine-tune](docs/fine-tuning-strategy.md) on their domain data.
+3. **Safeguard (safety policy signal)** — gpt-oss-safeguard evaluates content against configurable safety policies (violence, hate speech, fraud, etc.). Contributes category-level reasoning to the SignalVector. Not a PI/JB classifier.
+4. **SignalVector enrichment** — All Stage 1 results are added to the `SignalVector` and passed as context to Stage 2 classifiers. Frontier models see what Stage 1 already detected.
+5. **Frontier ensemble (every prompt)** — The cascade/parallel router fires frontier API classifiers (Anthropic, OpenAI with reasoning, Gemini) and waits for quorum. These receive enriched signals and provide 80-84% accuracy with nuanced scoring. **No early exit** — every prompt goes through Stage 2 to avoid false positive bypasses.
+6. **Weighted aggregation** — The aggregator combines all scores using learned weights, then applies threshold engine for ALLOW/FLAG/BLOCK.
 
-This gives sub-200ms latency for ~70% of requests (clear benign/injection via pre-gate + pre-filter) while maintaining 83%+ accuracy on ambiguous cases via the frontier ensemble.
+Stage 1 never short-circuits — it enriches context for Stage 2 but does not make blocking decisions on its own. This avoids false positives from fast local models bypassing the frontier ensemble.
 
 ## Preprocessor Pipeline
 
@@ -170,15 +157,17 @@ See [docs/ner-signals.md](docs/ner-signals.md) for details on how GLiNER NER wor
 
 ## Classifiers
 
-### Stage 1: Pre-gate + Pre-filter
+### Stage 1: Signal Enrichment
 
-| Component | Type | Accuracy | Precision | Recall | Role |
-|-----------|------|----------|-----------|--------|------|
-| [Model Armor](docs/eval-results.md#model-armor--qualifire-dataset-200-samples) | GCP API | 58-75% | 89-95% | 18-56% | Optional pre-gate. FP rates vary by domain — evaluate on your traffic. |
-| [HF DeBERTa](docs/litguard-spec.md) | Local GPU | 65-70% | 59-71% | 65-99% | Fast pre-filter (~100ms). Fine-tunable on customer data. |
-| [Safeguard](docs/safeguard-policy.md) | Local GPU | 60.5% | 92% | 23% | Safety policy signal. Detects policy categories (P1-P6) as context for Stage 2. |
+Stage 1 provides fast local signals that enrich the `SignalVector` for Stage 2. **Stage 1 never blocks or short-circuits** — every prompt proceeds to Stage 2 to avoid false positive bypasses.
 
-Stage 1 runs *before* frontier classifiers. Model Armor (optional, requires GCP) screens for high-confidence injections. DeBERTa provides fast local classification via [litguard](docs/litguard-spec.md) and can be [fine-tuned](docs/fine-tuning-strategy.md) per domain. Safeguard contributes safety policy category signals (instruction override, role hijacking, prompt extraction, delimiter injection, encoded attacks, indirect injection) — while its PI/JB recall is low, the category-level reasoning provides valuable context for Stage 2 frontier models. All Stage 1 results enrich the `SignalVector` passed to Stage 2 as supplementary signals. See [Google Cloud Model Armor docs](https://cloud.google.com/security/products/model-armor) for template configuration.
+| Component | Type | Role |
+|-----------|------|------|
+| [Model Armor](docs/eval-results.md#model-armor--qualifire-dataset-200-samples) | GCP API | PI/JB signal. Verdict + confidence added to SignalVector. Optional — requires GCP. |
+| [HF DeBERTa](docs/litguard-spec.md) | Local GPU | PI/JB signal (~100ms). Score + label added to SignalVector. [Fine-tunable](docs/fine-tuning-strategy.md) on customer data. |
+| [Safeguard](docs/safeguard-policy.md) | Local GPU | Safety policy signal. Evaluates configurable policies (P1-P6: violence, hate speech, self-harm, sexual content, dangerous activities, fraud). Category codes + reasoning added to SignalVector. |
+
+Model Armor and DeBERTa provide PI/JB-specific signals. Safeguard is a **safety policy signal provider** (not a PI/JB classifier) — it evaluates content against configurable safety policies and contributes category-level reasoning. Custom policies (spam, compliance, domain-specific) can be passed via the `policy` parameter. See [docs/safeguard-policy.md](docs/safeguard-policy.md) for built-in and custom policy examples. See [Google Cloud Model Armor docs](https://cloud.google.com/security/products/model-armor) for Model Armor template configuration.
 
 ### Stage 2: Frontier Classifiers
 
@@ -190,7 +179,7 @@ Stage 1 runs *before* frontier classifiers. Model Armor (optional, requires GCP)
 | Local LLM | Local | 1.5 | local | — | Any Ollama/vLLM model with classification prompt |
 | ONNX | Local | 1.0 | local | — | ONNX Runtime inference |
 
-All classifiers implement the `BaseClassifier` protocol and receive the `SignalVector` from the preprocessor. API classifiers use a shared few-shot classification prompt with signal context. Safeguard uses a custom policy-based system prompt (see [docs/safeguard-policy.md](docs/safeguard-policy.md)). HF DeBERTa models are served via [litguard](docs/litguard-spec.md) and can be [fine-tuned](docs/fine-tuning-strategy.md) on customer data.
+All classifiers implement the `BaseClassifier` protocol and receive the `SignalVector` from the preprocessor. Stage 2 API classifiers use a shared few-shot classification prompt enriched with Stage 1 signals. HF DeBERTa models (Stage 1) are served via [litguard](docs/litguard-spec.md) and can be [fine-tuned](docs/fine-tuning-strategy.md) on customer data. Safeguard (Stage 1) uses a configurable safety policy as system prompt — see [docs/safeguard-policy.md](docs/safeguard-policy.md) for built-in and custom policy examples.
 
 ## Routing
 
@@ -380,19 +369,118 @@ pytest tests/integration/test_model_benchmarks.py -v -s
 pytest tests/integration/test_eval_classifiers.py -v -s -k "test_openai_gpt_5_high"
 ```
 
-## Build & Test
+## Testing
+
+### Setup
 
 ```bash
 pip install -e ".[dev]"
 
-# Unit tests (no API keys needed)
+# For benchmark datasets (Qualifire, ToxicChat)
+pip install -e ".[benchmark]"
+```
+
+### Unit Tests
+
+No API keys or external services needed. All classifiers, routers, and external calls are mocked.
+
+```bash
+# Run all unit tests (353 tests)
 pytest tests/unit/ -v
 
-# Integration tests (requires API keys in .env)
-pytest tests/integration/ -v
+# Run by module
+pytest tests/unit/test_preprocessor/ -v       # Preprocessor pipeline (6 stages)
+pytest tests/unit/test_classifiers/ -v         # All classifier mocks
+pytest tests/unit/test_router/ -v              # Cascade + parallel router
+pytest tests/unit/test_aggregator/ -v          # Weighted, voting, meta
+pytest tests/unit/test_guard.py -v             # Guard orchestrator
+pytest tests/unit/test_pipeline.py -v          # Full pipeline (mocked classifiers)
+pytest tests/unit/test_engine.py -v            # Threshold engine
+```
 
-# Model benchmarks
+### Integration Tests
+
+Integration tests hit real APIs and services. Tests auto-detect available prerequisites and skip cleanly when services aren't reachable. A Rich-formatted prerequisite table prints at the start of each run.
+
+> **Note:** Always pass `-s` to see Rich-formatted output (prerequisite checks, dataset summaries, test result tables). Pytest captures stdout by default.
+>
+> ```bash
+> pytest tests/integration/test_full_ensemble.py -v -s
+> ```
+
+**Prerequisites:**
+
+| Requirement | Env Variable / Service | Needed For |
+|-------------|----------------------|------------|
+| OpenAI API key | `OPENAI_API_KEY` | Frontier ensemble tests |
+| Anthropic API key | `ANTHROPIC_API_KEY` | Frontier ensemble tests |
+| GCP project | `GCP_PROJECT_ID` | Model Armor tests |
+| HuggingFace token | `HF_TOKEN` | Qualifire dataset (gated) |
+| Safeguard (Ollama) | `SAFEGUARD_BASE_URL` (default `192.168.1.199:11434`) | Safety policy tests (ToxicChat) |
+| litguard (DeBERTa) | `192.168.1.199:8234` | DeBERTa signal tests |
+| `datasets` package | `pip install datasets` | All dataset-based tests |
+
+```bash
+# Full ensemble test (Qualifire + ToxicChat, requires API keys)
+pytest tests/integration/test_full_ensemble.py -v -s
+
+# Qualifire benchmark (RegexPrefilter only, requires HF_TOKEN)
+pytest tests/integration/test_benchmark_qualifire.py -v -s
+
+# Individual classifier evals (requires respective API keys)
+pytest tests/integration/test_eval_classifiers.py -v -s -k "test_anthropic_sonnet"
+pytest tests/integration/test_eval_classifiers.py -v -s -k "test_openai_gpt_5_high"
+
+# Model Armor eval (requires GCP_PROJECT_ID)
+pytest tests/integration/test_eval_model_armor.py -v -s
+
+# Quick model benchmarks (10-sample)
 pytest tests/integration/test_model_benchmarks.py -v -s
+
+# Live classifier smoke tests
+pytest tests/integration/test_live_classifiers.py -v -s
+```
+
+### Eval Datasets
+
+The shared dataset loader at `injection_guard.eval.dataset` normalizes HuggingFace datasets into a common `TestSample` format:
+
+```python
+from injection_guard.eval.dataset import load_qualifire, load_toxicchat, load_mixed
+
+# Qualifire — PI/JB detection (gated, requires HF_TOKEN)
+samples = load_qualifire(n=100, seed=42, balanced=True)
+
+# ToxicChat — safety/toxicity detection (public)
+samples = load_toxicchat(n=100, seed=42, balanced=True)
+
+# Mixed — combined from both sources
+samples = load_mixed(n_per_source=50, seed=42)
+```
+
+Each `TestSample` has `prompt`, `label` (`"injection"` / `"benign"` / `"toxic"` / `"safe"`), `source`, and `is_attack` property.
+
+### Test Structure
+
+```
+tests/
+  unit/                              # All mocked, no external deps
+    test_preprocessor/               # 6-stage signal extraction
+    test_classifiers/                # OpenAI, Anthropic, Gemini, Safeguard, etc.
+    test_router/                     # Cascade + parallel routing
+    test_aggregator/                 # Score aggregation strategies
+    test_guard.py                    # Guard orchestrator
+    test_pipeline.py                 # Full pipeline (mocked)
+    test_engine.py                   # Threshold engine
+    test_config.py                   # YAML config loading
+    test_eval/                       # Eval runner, report, batch adapters
+  integration/                       # Real APIs, auto-skips on missing prereqs
+    test_full_ensemble.py            # Full Stage 1 + Stage 2 with real datasets
+    test_benchmark_qualifire.py      # Qualifire benchmark (RegexPrefilter)
+    test_eval_classifiers.py         # Per-classifier eval (Batch API)
+    test_eval_model_armor.py         # Model Armor eval
+    test_model_benchmarks.py         # Quick multi-model benchmarks
+    test_live_classifiers.py         # Smoke tests against live services
 ```
 
 ## Documentation
@@ -402,7 +490,7 @@ pytest tests/integration/test_model_benchmarks.py -v -s
 - [Fine-Tuning Strategy](docs/fine-tuning-strategy.md) — how to fine-tune DeBERTa models to improve detection metrics
 - [Domain Fine-Tuning](docs/domain-fine-tuning.md) — domain-specific tuning for healthcare, finance, legal, and other verticals
 - [NER Signals & Preprocessor](docs/ner-signals.md) — how GLiNER NER works and how signals augment classifiers
-- [Safeguard Policy Setup](docs/safeguard-policy.md) — gpt-oss-safeguard deployment, policy categories, and configuration
+- [Safeguard Safety Policies](docs/safeguard-policy.md) — gpt-oss-safeguard as Stage 1 safety policy signal provider, custom policy authoring, and deployment
 - [litguard Spec](docs/litguard-spec.md) — LitServe-based model serving platform for HuggingFace models
 
 ## Project Structure
@@ -428,7 +516,7 @@ src/injection_guard/
         openai.py         # OpenAI API classifier
         anthropic.py      # Anthropic API classifier
         gemini.py         # Google Gemini via Vertex AI
-        safeguard.py      # gpt-oss-safeguard with PI/JB policy
+        safeguard.py      # gpt-oss-safeguard safety policy signal provider
         local_llm.py      # Ollama, vLLM, OpenAI-compatible
         onnx.py           # Local ONNX model
         regex.py          # Legacy regex prefilter

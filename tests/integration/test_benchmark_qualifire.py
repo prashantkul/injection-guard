@@ -20,14 +20,12 @@ Run:
 """
 from __future__ import annotations
 
-import os
-import random
 from collections import Counter
 
 import pytest
 
 try:
-    from datasets import load_dataset
+    from injection_guard.eval.dataset import load_qualifire, TestSample
     HAS_DATASETS = True
 except ImportError:
     HAS_DATASETS = False
@@ -37,31 +35,7 @@ from injection_guard.classifiers.regex import RegexPrefilter
 from injection_guard.router.cascade import CascadeRouter
 from injection_guard.types import Action, CascadeConfig
 
-DATASET_ID = "qualifire/prompt-injections-benchmark"
 SAMPLE_SIZE = 100
-
-
-def _get_hf_token() -> str | None:
-    """Get HF token from environment or .env file."""
-    token = os.environ.get("HF_TOKEN")
-    if token:
-        return token
-    try:
-        from dotenv import load_dotenv
-        load_dotenv()
-        return os.environ.get("HF_TOKEN")
-    except ImportError:
-        return None
-
-
-def _load_qualifire(split: str = "test", sample_size: int | None = None):
-    """Load the Qualifire dataset, optionally sampling."""
-    token = _get_hf_token()
-    ds = load_dataset(DATASET_ID, split=split, token=token)
-    if sample_size and len(ds) > sample_size:
-        indices = random.Random(42).sample(range(len(ds)), sample_size)
-        ds = ds.select(indices)
-    return ds
 
 
 def _make_guard() -> InjectionGuard:
@@ -85,7 +59,7 @@ def _can_access_dataset() -> bool:
     if not HAS_DATASETS:
         return False
     try:
-        _load_qualifire(split="test[:1]")
+        load_qualifire(n=1, seed=42)
         return True
     except Exception:
         return False
@@ -93,7 +67,7 @@ def _can_access_dataset() -> bool:
 
 _skip_no_access = pytest.mark.skipif(
     not _can_access_dataset(),
-    reason=f"Cannot access {DATASET_ID} (check HF_TOKEN and dataset access)",
+    reason="Cannot access qualifire/prompt-injections-benchmark (check HF_TOKEN and dataset access)",
 )
 
 pytestmark = [pytest.mark.benchmark, _skip_no_datasets, _skip_no_access]
@@ -102,37 +76,33 @@ pytestmark = [pytest.mark.benchmark, _skip_no_datasets, _skip_no_access]
 class TestQualifireDatasetLoading:
     """Verify dataset loads correctly and has expected schema."""
 
-    def test_dataset_has_expected_columns(self):
-        ds = _load_qualifire(split="test[:5]")
-        assert "text" in ds.column_names
-        assert "label" in ds.column_names
-
-    def test_labels_are_valid(self):
-        ds = _load_qualifire(split="test[:50]")
-        labels = set(ds["label"])
-        assert labels <= {"jailbreak", "benign"}, f"Unexpected labels: {labels}"
-
     def test_dataset_has_both_classes(self):
-        ds = _load_qualifire(split="test[:200]")
-        labels = set(ds["label"])
-        assert "jailbreak" in labels, "No jailbreak samples found"
+        samples = load_qualifire(n=50, seed=42)
+        labels = {s.label for s in samples}
+        assert "injection" in labels, "No injection samples found"
         assert "benign" in labels, "No benign samples found"
+
+    def test_samples_have_prompts(self):
+        samples = load_qualifire(n=5, seed=42)
+        for s in samples:
+            assert len(s.prompt) > 0, "Empty prompt"
+            assert s.source == "qualifire"
 
 
 class TestQualifireClassification:
     """Run injection-guard against Qualifire samples."""
 
     async def test_injection_scores_higher_than_benign(self):
-        """Average score for jailbreak prompts exceeds average for benign."""
-        ds = _load_qualifire(split="test", sample_size=SAMPLE_SIZE)
+        """Average score for injection prompts exceeds average for benign."""
+        samples = load_qualifire(n=SAMPLE_SIZE, seed=42)
         guard = _make_guard()
 
         injection_scores = []
         benign_scores = []
 
-        for row in ds:
-            decision = await guard.classify(row["text"])
-            if row["label"] == "jailbreak":
+        for s in samples:
+            decision = await guard.classify(s.prompt)
+            if s.label == "injection":
                 injection_scores.append(decision.ensemble_score)
             else:
                 benign_scores.append(decision.ensemble_score)
@@ -150,66 +120,57 @@ class TestQualifireClassification:
 
     async def test_no_benign_blocked(self):
         """Benign prompts should never be BLOCK (low false-positive rate)."""
-        ds = _load_qualifire(split="test", sample_size=SAMPLE_SIZE)
+        samples = load_qualifire(n=SAMPLE_SIZE, seed=42)
         guard = _make_guard()
 
-        blocked_benign = []
-        for row in ds:
-            if row["label"] != "benign":
-                continue
-            decision = await guard.classify(row["text"])
-            if decision.action == Action.BLOCK:
-                blocked_benign.append(row["text"][:80])
-
-        # Allow up to 5% false positive rate for regex-only classifier
-        benign_count = sum(1 for r in ds if r["label"] == "benign")
-        if benign_count == 0:
+        benign = [s for s in samples if s.label == "benign"]
+        if not benign:
             pytest.skip("No benign samples in subset")
 
-        fp_rate = len(blocked_benign) / benign_count
+        blocked_benign = []
+        for s in benign:
+            decision = await guard.classify(s.prompt)
+            if decision.action == Action.BLOCK:
+                blocked_benign.append(s.prompt[:80])
+
+        fp_rate = len(blocked_benign) / len(benign)
         assert fp_rate <= 0.05, (
             f"False positive rate {fp_rate:.1%} exceeds 5%. "
             f"Blocked benign samples: {blocked_benign[:5]}"
         )
 
     async def test_known_injections_detected(self):
-        """At least some jailbreak prompts should be FLAG or BLOCK."""
-        ds = _load_qualifire(split="test", sample_size=SAMPLE_SIZE)
+        """At least some injection prompts should be FLAG or BLOCK."""
+        samples = load_qualifire(n=SAMPLE_SIZE, seed=42)
         guard = _make_guard()
 
-        detected = 0
-        total_injection = 0
+        injections = [s for s in samples if s.label == "injection"]
+        if not injections:
+            pytest.skip("No injection samples in subset")
 
-        for row in ds:
-            if row["label"] != "jailbreak":
-                continue
-            total_injection += 1
-            decision = await guard.classify(row["text"])
+        detected = 0
+        for s in injections:
+            decision = await guard.classify(s.prompt)
             if decision.action in (Action.FLAG, Action.BLOCK):
                 detected += 1
 
-        if total_injection == 0:
-            pytest.skip("No jailbreak samples in subset")
-
-        detection_rate = detected / total_injection
-        # Regex-only won't catch everything, but should get some
+        detection_rate = detected / len(injections)
         assert detection_rate > 0.05, (
             f"Detection rate {detection_rate:.1%} is too low. "
-            f"Detected {detected}/{total_injection} injections."
+            f"Detected {detected}/{len(injections)} injections."
         )
 
     async def test_action_distribution_is_reasonable(self):
         """Check that we get a mix of actions, not all one category."""
-        ds = _load_qualifire(split="test", sample_size=SAMPLE_SIZE)
+        samples = load_qualifire(n=SAMPLE_SIZE, seed=42)
         guard = _make_guard()
 
         actions = []
-        for row in ds:
-            decision = await guard.classify(row["text"])
+        for s in samples:
+            decision = await guard.classify(s.prompt)
             actions.append(decision.action.value)
 
         counts = Counter(actions)
-        # Should have at least ALLOW and one of FLAG/BLOCK
         assert "allow" in counts, f"No ALLOW decisions. Distribution: {counts}"
         assert len(counts) >= 2, (
             f"Only one action type produced. Distribution: {counts}"
@@ -223,15 +184,16 @@ class TestQualifireMetrics:
         """Full benchmark report with Rich confusion matrix and metrics."""
         from injection_guard.reporting import print_benchmark
 
-        ds = _load_qualifire(split="test", sample_size=200)
+        samples = load_qualifire(n=200, seed=42)
         guard = _make_guard()
 
         decisions = []
         labels = []
-        for row in ds:
-            decision = await guard.classify(row["text"])
+        for s in samples:
+            decision = await guard.classify(s.prompt)
             decisions.append(decision)
-            labels.append(row["label"])
+            # print_benchmark expects original qualifire labels
+            labels.append(s.metadata.get("original_label", s.label))
 
         print_benchmark(
             decisions,
@@ -239,5 +201,4 @@ class TestQualifireMetrics:
             title="Qualifire Benchmark — RegexPrefilter only",
         )
 
-        # Regex-only: we expect low recall but decent precision
         assert len(decisions) == len(labels)

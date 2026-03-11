@@ -143,9 +143,9 @@ class TestSafeguardClassify:
         call_kwargs = mock_client.chat.completions.create.call_args[1]
         system_msg = call_kwargs["messages"][0]
         assert system_msg["role"] == "system"
-        assert "P1: Instruction Override" in system_msg["content"]
-        assert "P2: Role Hijacking" in system_msg["content"]
-        assert "P5: Encoded Attacks" in system_msg["content"]
+        assert "P1: Violence & Threats" in system_msg["content"]
+        assert "P2: Hate Speech & Discrimination" in system_msg["content"]
+        assert "P5: Dangerous Activities" in system_msg["content"]
 
 
 class TestSafeguardProperties:

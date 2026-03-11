@@ -8,6 +8,8 @@ from typing import Any, Literal
 
 from dotenv import load_dotenv
 
+import logging
+
 from injection_guard.types import (
     Action,
     AggregatorType,
@@ -16,9 +18,13 @@ from injection_guard.types import (
     Decision,
     ModelArmorResult,
     PreprocessorOutput,
+    RouteResult,
     SignalVector,
+    StageOneSignals,
     ThresholdConfig,
 )
+
+logger = logging.getLogger(__name__)
 from injection_guard.preprocessor.pipeline import Preprocessor
 from injection_guard.engine import ThresholdEngine
 from injection_guard.aggregator import get_aggregator
@@ -66,7 +72,15 @@ class InjectionGuard:
 
         thresholds = thresholds or {"block": 0.85, "flag": 0.50}
 
-        self._classifiers = classifiers
+        # Separate Stage 1 (signal enrichment) from Stage 2 (frontier ensemble)
+        self._stage1_classifiers: list[BaseClassifier] = []
+        self._classifiers: list[BaseClassifier] = []
+        for clf in classifiers:
+            if self._is_stage1(clf):
+                self._stage1_classifiers.append(clf)
+            else:
+                self._classifiers.append(clf)
+
         self._router = router
         self._model_armor = model_armor
         self._log_prompts = log_prompts
@@ -101,6 +115,41 @@ class InjectionGuard:
             raw = config
         kwargs = build_from_config(raw)
         return cls(**kwargs)
+
+    @staticmethod
+    def _is_stage1(clf: BaseClassifier) -> bool:
+        """Check if a classifier is a Stage 1 signal enricher."""
+        cls_name = type(clf).__name__
+        return cls_name in ("SafeguardClassifier", "HFCompatClassifier")
+
+    async def _run_stage1(
+        self, prompt: str, signals: SignalVector,
+    ) -> None:
+        """Run Stage 1 classifiers and enrich SignalVector in-place.
+
+        Stage 1 never blocks — it only enriches signals for Stage 2.
+        """
+        for clf in self._stage1_classifiers:
+            try:
+                result = await asyncio.wait_for(clf.classify(prompt, signals), timeout=10.0)
+            except (asyncio.TimeoutError, Exception) as exc:
+                logger.warning("Stage 1 classifier %s failed: %s", clf.name, exc)
+                continue
+
+            if result.metadata.get("error"):
+                logger.warning("Stage 1 classifier %s returned error: %s", clf.name, result.metadata["error"])
+                continue
+
+            cls_name = type(clf).__name__
+            if cls_name == "SafeguardClassifier":
+                signals.stage_one.safeguard_violation = bool(result.metadata.get("violation"))
+                signals.stage_one.safeguard_confidence = result.metadata.get("safeguard_confidence")
+                signals.stage_one.safeguard_categories = result.metadata.get("categories", [])
+                signals.stage_one.safeguard_reasoning = result.reasoning
+            elif cls_name == "HFCompatClassifier":
+                signals.stage_one.deberta_score = result.score
+                signals.stage_one.deberta_label = result.label
+                signals.stage_one.deberta_confidence = result.confidence
 
     async def classify(self, prompt: str) -> Decision:
         """Classify a prompt for injection attempts.
@@ -143,18 +192,22 @@ class InjectionGuard:
                 # MEDIUM confidence — boost risk_prior
                 prep.risk_prior = min(1.0, prep.risk_prior + 0.3)
 
-        # 4. Route to classifiers
-        route_results: list[tuple[str, ClassifierResult]] = await self._router.route(
+        # 4. Stage 1: signal enrichment (never blocks)
+        if self._stage1_classifiers:
+            await self._run_stage1(prep.normalized_prompt, prep.signals)
+
+        # 5. Route to Stage 2 classifiers
+        route_result: RouteResult = await self._router.route(
             classifiers=self._classifiers,
             prompt=prep.normalized_prompt,
             signals=prep.signals,
             risk_prior=prep.risk_prior,
         )
+        route_results = route_result.results
 
-        # 5. Aggregate scores
+        # 6. Aggregate scores
+        clf_map = {c.name: c for c in self._classifiers}
         if route_results:
-            # Build classifier lookup for weights
-            clf_map = {c.name: c for c in self._classifiers}
             agg_pairs = []
             for name, result in route_results:
                 clf = clf_map.get(name)
@@ -166,13 +219,13 @@ class InjectionGuard:
             ensemble_score = prep.risk_prior
             ensemble_label = "injection" if prep.risk_prior >= 0.5 else "benign"
 
-        # 6. Threshold → action
+        # 7. Threshold → action
         action = self._engine.decide(ensemble_score)
 
         # Build model_scores dict
         model_scores = {name: result for name, result in route_results}
 
-        # Find reasoning from highest-weight API model
+        # Find reasoning from highest-weight API model and check for errors
         reasoning = None
         degraded = False
         for name, result in route_results:
@@ -180,6 +233,13 @@ class InjectionGuard:
                 degraded = True
             if result.reasoning and reasoning is None:
                 reasoning = result.reasoning
+
+        # Fail closed: if quorum was not met, block the prompt.
+        # A degraded ensemble without sufficient classifier responses
+        # cannot be trusted to allow prompts through.
+        if not route_result.quorum_met:
+            action = Action.BLOCK
+            degraded = True
 
         return Decision(
             action=action,

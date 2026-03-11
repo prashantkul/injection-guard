@@ -15,6 +15,7 @@ from injection_guard.types import (
     BaseClassifier,
     CascadeConfig,
     ClassifierResult,
+    RouteResult,
     SignalVector,
 )
 
@@ -47,7 +48,7 @@ class CascadeRouter:
         prompt: str,
         signals: SignalVector | None = None,
         risk_prior: float = 0.0,
-    ) -> list[tuple[str, ClassifierResult]]:
+    ) -> RouteResult:
         """Run classifiers in cascade order and return results.
 
         Args:
@@ -57,11 +58,12 @@ class CascadeRouter:
             risk_prior: Risk prior from the preprocessor (0.0–1.0).
 
         Returns:
-            A list of ``(classifier_name, ClassifierResult)`` tuples for every
-            classifier that was successfully invoked.  The list is ordered by
-            invocation time.
+            A ``RouteResult`` containing per-classifier results and whether
+            at least one classifier responded successfully.
         """
         results: list[tuple[str, ClassifierResult]] = []
+        total_classifiers = 0
+        failed_classifiers = 0
 
         # Group classifiers by tier.
         tiers: dict[str, list[BaseClassifier]] = {t: [] for t in _TIER_ORDER}
@@ -85,18 +87,21 @@ class CascadeRouter:
                 continue
 
             for clf in tiers[tier]:
+                total_classifiers += 1
                 result = await self._invoke_with_retry(clf, prompt, signals)
                 if result is None:
-                    # All retries exhausted — skip this classifier.
+                    failed_classifiers += 1
                     continue
 
                 results.append((clf.name, result))
 
                 # Early exit on confident result.
                 if self._is_confident(result.score):
-                    return results
+                    return RouteResult(results=results, quorum_met=True)
 
-        return results
+        # Quorum met if at least half of attempted classifiers responded
+        quorum_met = len(results) > 0 and len(results) >= (total_classifiers + 1) // 2
+        return RouteResult(results=results, quorum_met=quorum_met)
 
     # ------------------------------------------------------------------
     # Internal helpers

@@ -8,6 +8,12 @@ from injection_guard.eval.batch import (
     AnthropicBatchAdapter,
     GeminiBatchAdapter,
 )
+from injection_guard.eval.dataset import (
+    TestSample,
+    load_qualifire,
+    load_toxicchat,
+    load_mixed,
+)
 
 __all__ = [
     "EvalRunner",
@@ -15,4 +21,8 @@ __all__ = [
     "OpenAIBatchAdapter",
     "AnthropicBatchAdapter",
     "GeminiBatchAdapter",
+    "TestSample",
+    "load_qualifire",
+    "load_toxicchat",
+    "load_mixed",
 ]

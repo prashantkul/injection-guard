@@ -24,6 +24,7 @@ __all__ = [
     "CascadeConfig",
     "ParallelConfig",
     "ThresholdConfig",
+    "RouteResult",
     "ModelArmorResult",
     "Decision",
     "EvalSample",
@@ -137,7 +138,7 @@ class StageOneSignals:
     model_armor_blocked: bool | None = None
     model_armor_confidence: str | None = None  # "LOW" | "MEDIUM" | "HIGH"
     model_armor_categories: list[str] = field(default_factory=list)
-    # Safeguard safety policy signal (P1-P6 category detection)
+    # Safeguard safety policy signal (configurable P1-P6 categories)
     safeguard_violation: bool | None = None
     safeguard_confidence: str | None = None  # "low" | "medium" | "high"
     safeguard_categories: list[str] = field(default_factory=list)
@@ -234,6 +235,21 @@ class ParallelConfig(RouterConfig):
     quorum: int = 2
     category_quorum: dict[str, int] = field(default_factory=dict)
     classifier_categories: dict[str, str] = field(default_factory=dict)
+
+
+# === Route Result ===
+
+
+@dataclass
+class RouteResult:
+    """Result from a router invocation.
+
+    Wraps the per-classifier results with metadata about whether the
+    router's quorum requirement was satisfied.
+    """
+
+    results: list[tuple[str, ClassifierResult]] = field(default_factory=list)
+    quorum_met: bool = True
 
 
 # === Threshold Types ===

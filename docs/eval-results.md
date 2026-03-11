@@ -51,14 +51,13 @@ gpt-5 + high reasoning gains +3.5% accuracy; gpt-5-mini stays flat because the r
 ## Open-Weight Models — Qualifire Dataset (200 samples)
 
 HuggingFace classification models served via litguard (LitServe) on DGX.
-Safeguard models served via Ollama on DGX.
 
 | Model | TP | FN | TN | FP | Precision | Recall | F1 | Accuracy |
 |-------|---:|---:|---:|---:|----------:|-------:|-----:|---------:|
 | protectai/deberta-v3-base-prompt-injection-v2 | 65 | 35 | 74 | 26 | 0.714 | 0.650 | 0.681 | 69.5% |
 | deepset/deberta-v3-base-injection | 99 | 1 | 31 | 69 | 0.589 | 0.990 | 0.739 | 65.0% |
-| Safeguard 20B (Ollama) | 23 | 77 | 98 | 2 | 0.920 | 0.230 | 0.368 | 60.5% |
-| Safeguard 120B (Ollama) | 19 | 81 | 96 | 4 | 0.826 | 0.190 | 0.309 | 57.5% |
+
+> **Note:** Safeguard (gpt-oss-safeguard) is not included here — it is a **Stage 1 safety policy signal provider**, not a PI/JB classifier. Its value is in policy category detection (P1-P6), not classification accuracy. See [safeguard-policy.md](safeguard-policy.md) for details.
 
 ### Observations
 
@@ -73,10 +72,9 @@ Safeguard models served via Ollama on DGX.
 **Open-Weight Models:**
 - **protectai/deberta-v3-base-prompt-injection-v2**: Best open-weight accuracy (69.5%). Balanced precision/recall. Purpose-built for prompt injection.
 - **deepset/deberta-v3-base-injection**: Near-perfect recall (99%) but very high false positive rate (69%). Best as a pre-filter — catches nearly everything but flags too many benign prompts.
-- **Safeguard 20B/120B**: Very high precision (83-92%) but extremely low recall (19-23%). Useful as high-precision pre-filters. 120B paradoxically worse than 20B.
 - Open-weight models are 10-100x faster than API classifiers (~100ms vs 1-10s).
 
 **Recommended Ensemble Strategy:**
 1. **Fast pre-filter**: deepset/deberta (99% recall, ~100ms) — catch obvious injections instantly
-2. **Primary classifier**: Anthropic claude-opus-4.6 or OpenAI gpt-5 + high reasoning (~82-84% accuracy)
-3. **High-precision tiebreaker**: Safeguard 20B (92% precision) — confirm uncertain cases
+2. **Safety policy signals**: Safeguard (category-level reasoning for Stage 2 context)
+3. **Primary classifier**: Anthropic claude-opus-4.6 or OpenAI gpt-5 + high reasoning (~82-84% accuracy)
