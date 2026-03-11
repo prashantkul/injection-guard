@@ -166,7 +166,7 @@ All classifiers implement the `BaseClassifier` protocol and receive the `SignalV
 
 Two strategies control how classifiers are invoked:
 
-**Parallel Router** (default) — fires all classifiers concurrently, returns when a category quorum is met:
+**Parallel Router** — fires all classifiers concurrently, returns when a category quorum is met:
 
 ```yaml
 router:
@@ -177,7 +177,28 @@ router:
     api: 2     # at least 2 API models must respond
 ```
 
-**Cascade Router** — runs classifiers tier-by-tier (fast → medium → slow), exits early on high confidence.
+**Cascade Router** (recommended) — runs classifiers tier-by-tier (fast → medium → slow), exits early on high confidence. This is the recommended strategy for the tiered pre-filter architecture:
+
+```yaml
+router:
+  type: cascade
+  timeout_ms: 10000
+  fast_confidence: 0.85          # exit early if confidence > 85%
+  escalate_on_high_risk_prior: true
+  risk_prior_escalation_threshold: 0.7  # skip fast tier if risk_prior > 0.7
+```
+
+The cascade router groups classifiers by their `latency_tier` attribute and runs them in order:
+
+| Tier | Classifiers | Latency | Behavior |
+|------|-------------|---------|----------|
+| fast | DeBERTa (HF), ONNX, Regex | ~100ms | Run first. If confidence > `fast_confidence`, return immediately. |
+| medium | Safeguard, Local LLM | ~1-5s | Run if fast tier is uncertain. |
+| slow | OpenAI, Anthropic, Gemini | ~2-10s | Run only for ambiguous cases. |
+
+If the preprocessor's `risk_prior` exceeds `risk_prior_escalation_threshold`, the fast tier is skipped entirely and classification starts at medium/slow tiers — this prevents high-risk prompts from being cleared by a less capable local model.
+
+This gives sub-200ms decisions for ~70% of traffic (clear benign/injection via DeBERTa) while escalating only ambiguous cases to frontier API classifiers.
 
 ## Quick Start
 
