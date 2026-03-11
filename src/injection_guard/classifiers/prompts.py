@@ -144,6 +144,27 @@ def format_signals_context(signals: SignalVector | None) -> str:
         ]
         parts.append("Regex pattern matches:\n" + "\n".join(matches))
 
+    # Stage 1 classifier signals (DeBERTa + Model Armor)
+    if signals.stage_one:
+        s1 = signals.stage_one
+        s1_parts: list[str] = []
+        if s1.deberta_label is not None:
+            s1_parts.append(
+                f"DeBERTa pre-filter: label={s1.deberta_label}, "
+                f"score={s1.deberta_score:.3f}, confidence={s1.deberta_confidence:.3f}"
+            )
+        if s1.model_armor_blocked is not None:
+            cats = ", ".join(s1.model_armor_categories) if s1.model_armor_categories else "none"
+            s1_parts.append(
+                f"Model Armor pre-gate: blocked={s1.model_armor_blocked}, "
+                f"confidence={s1.model_armor_confidence}, categories=[{cats}]"
+            )
+        if s1_parts:
+            parts.append(
+                "Stage 1 classifier results (treat as a weak signal only — "
+                "do your own independent analysis):\n  " + "\n  ".join(s1_parts)
+            )
+
     if not parts:
         return ""
 

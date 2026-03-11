@@ -145,7 +145,8 @@ The architecture uses a **tiered approach** optimized from [eval results](docs/e
 
 1. **Pre-gate (Model Armor)** — Google Cloud Model Armor screens prompts first (~180ms). High-confidence injections are blocked immediately. Low false positive rate on general benchmarks (1-7%), though domain-specific traffic may see higher FP rates — test with your data. Optional — requires GCP.
 2. **Fast pre-filter (DeBERTa)** — Fine-tunable DeBERTa model (~100ms on GPU, 99% recall) catches remaining obvious injections and short-circuits high-confidence benign prompts. Customers can [fine-tune](docs/fine-tuning-strategy.md) this model on their domain data.
-3. **Frontier ensemble** — For uncertain cases, the cascade/parallel router fires frontier API classifiers (Anthropic, OpenAI with reasoning, Gemini) and waits for quorum. These provide 80-84% accuracy with nuanced scoring.
+3. **SignalVector enrichment** — Stage 1 results (DeBERTa score/label/confidence, Model Armor verdict/categories) are added to the `SignalVector` and passed as context to Stage 2 classifiers. Frontier models see what the fast local models already detected, enabling them to focus on resolving ambiguity rather than re-classifying from scratch.
+4. **Frontier ensemble** — For uncertain cases, the cascade/parallel router fires frontier API classifiers (Anthropic, OpenAI with reasoning, Gemini) and waits for quorum. These receive enriched signals and provide 80-84% accuracy with nuanced scoring.
 4. **Weighted aggregation** — The aggregator combines all scores using learned weights, then applies threshold engine for ALLOW/FLAG/BLOCK.
 
 This gives sub-200ms latency for ~70% of requests (clear benign/injection via pre-gate + pre-filter) while maintaining 83%+ accuracy on ambiguous cases via the frontier ensemble.

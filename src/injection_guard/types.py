@@ -15,6 +15,7 @@ __all__ = [
     "EntityMatch",
     "LinguisticSignals",
     "RegexSignals",
+    "StageOneSignals",
     "SignalVector",
     "PreprocessorOutput",
     "ClassifierResult",
@@ -121,8 +122,24 @@ class RegexSignals:
 
 
 @dataclass
+class StageOneSignals:
+    """Signals from Stage 1 classifiers (pre-gate + pre-filter).
+
+    Enriches the SignalVector with DeBERTa and Model Armor results so
+    Stage 2 frontier classifiers receive richer context.
+    """
+
+    deberta_score: float | None = None
+    deberta_label: str | None = None
+    deberta_confidence: float | None = None
+    model_armor_blocked: bool | None = None
+    model_armor_confidence: str | None = None  # "LOW" | "MEDIUM" | "HIGH"
+    model_armor_categories: list[str] = field(default_factory=list)
+
+
+@dataclass
 class SignalVector:
-    """Combined signals from all preprocessor stages."""
+    """Combined signals from all preprocessor stages and Stage 1 classifiers."""
 
     unicode: UnicodeSignals = field(default_factory=UnicodeSignals)
     encoding: EncodingSignals = field(default_factory=EncodingSignals)
@@ -130,6 +147,7 @@ class SignalVector:
     token: TokenSignals = field(default_factory=TokenSignals)
     linguistic: LinguisticSignals = field(default_factory=LinguisticSignals)
     regex: RegexSignals = field(default_factory=RegexSignals)
+    stage_one: StageOneSignals = field(default_factory=StageOneSignals)
 
 
 @dataclass
