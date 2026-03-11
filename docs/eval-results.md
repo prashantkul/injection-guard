@@ -13,7 +13,7 @@ Dataset: `qualifire/prompt-injections-benchmark` (test split).
 
 ### Observations
 
-- **MA High**: Near-perfect precision (94.7%) but very low recall (18%). Only catches the most obvious injection patterns. Best suited as a zero-false-positive pre-gate.
+- **MA High**: High precision (94.7%) on this benchmark but very low recall (18%). Only catches the most obvious injection patterns. Note: FP rates may be higher on domain-specific traffic — evaluate on your data before using as a blocking gate.
 - **MA Medium**: Balanced trade-off. Catches ~45% of injections with 4% false positive rate.
 - **MA Low**: Best overall accuracy (74.5%) but still misses 44% of injections. 7% false positive rate.
 - All templates have very low false positive rates (1-7%), making them safe as pre-filters.
@@ -73,7 +73,7 @@ Safeguard models served via Ollama on DGX.
 **Open-Weight Models:**
 - **protectai/deberta-v3-base-prompt-injection-v2**: Best open-weight accuracy (69.5%). Balanced precision/recall. Purpose-built for prompt injection.
 - **deepset/deberta-v3-base-injection**: Near-perfect recall (99%) but very high false positive rate (69%). Best as a pre-filter — catches nearly everything but flags too many benign prompts.
-- **Safeguard 20B/120B**: Very high precision (83-92%) but extremely low recall (19-23%). Useful only as zero-FP pre-filters. 120B paradoxically worse than 20B.
+- **Safeguard 20B/120B**: Very high precision (83-92%) but extremely low recall (19-23%). Useful as high-precision pre-filters. 120B paradoxically worse than 20B.
 - Open-weight models are 10-100x faster than API classifiers (~100ms vs 1-10s).
 
 **Recommended Ensemble Strategy:**

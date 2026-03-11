@@ -137,7 +137,7 @@ flowchart LR
 
 The architecture uses a **tiered approach** optimized from [eval results](docs/eval-results.md) on the Qualifire benchmark:
 
-1. **Pre-gate (Model Armor)** — Google Cloud Model Armor screens prompts first (~180ms, 95% precision). High-confidence injections are blocked immediately. Near-zero false positives make it safe as an early gate. Optional — requires GCP.
+1. **Pre-gate (Model Armor)** — Google Cloud Model Armor screens prompts first (~180ms). High-confidence injections are blocked immediately. Low false positive rate on general benchmarks (1-7%), though domain-specific traffic may see higher FP rates — test with your data. Optional — requires GCP.
 2. **Fast pre-filter (DeBERTa)** — Fine-tunable DeBERTa model (~100ms on GPU, 99% recall) catches remaining obvious injections and short-circuits high-confidence benign prompts. Customers can [fine-tune](docs/fine-tuning-strategy.md) this model on their domain data.
 3. **Frontier ensemble** — For uncertain cases, the cascade/parallel router fires frontier API classifiers (Anthropic, OpenAI with reasoning, Gemini) and waits for quorum. These provide 80-84% accuracy with nuanced scoring.
 4. **Weighted aggregation** — The aggregator combines all scores using learned weights, then applies threshold engine for ALLOW/FLAG/BLOCK.
@@ -167,7 +167,7 @@ See [docs/ner-signals.md](docs/ner-signals.md) for details on how GLiNER NER wor
 
 | Gate | Type | Accuracy | Precision | Role |
 |------|------|----------|-----------|------|
-| [Model Armor](docs/eval-results.md#model-armor--qualifire-dataset-200-samples) | GCP API | 58-75% | 89-95% | High-precision pre-gate. Blocks obvious injections with near-zero false positives. |
+| [Model Armor](docs/eval-results.md#model-armor--qualifire-dataset-200-samples) | GCP API | 58-75% | 89-95% | Pre-gate for high-confidence detections. FP rates vary by domain — evaluate on your traffic. |
 
 Model Armor runs *before* classifiers as an optional pre-gate. Its high precision (89-95%) and low false positive rate (1-7%) make it safe to block immediately on high-confidence detections. See [docs/safeguard-policy.md](docs/safeguard-policy.md) for template configuration.
 
