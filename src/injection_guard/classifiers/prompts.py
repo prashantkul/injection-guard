@@ -144,7 +144,7 @@ def format_signals_context(signals: SignalVector | None) -> str:
         ]
         parts.append("Regex pattern matches:\n" + "\n".join(matches))
 
-    # Stage 1 classifier signals (DeBERTa + Model Armor)
+    # Stage 1 classifier signals (DeBERTa + Model Armor + Safeguard)
     if signals.stage_one:
         s1 = signals.stage_one
         s1_parts: list[str] = []
@@ -158,6 +158,14 @@ def format_signals_context(signals: SignalVector | None) -> str:
             s1_parts.append(
                 f"Model Armor pre-gate: blocked={s1.model_armor_blocked}, "
                 f"confidence={s1.model_armor_confidence}, categories=[{cats}]"
+            )
+        if s1.safeguard_violation is not None:
+            cats = ", ".join(s1.safeguard_categories) if s1.safeguard_categories else "none"
+            reasoning = f", reasoning={s1.safeguard_reasoning}" if s1.safeguard_reasoning else ""
+            s1_parts.append(
+                f"Safeguard policy analysis: violation={s1.safeguard_violation}, "
+                f"confidence={s1.safeguard_confidence}, "
+                f"policy_categories=[{cats}]{reasoning}"
             )
         if s1_parts:
             parts.append(

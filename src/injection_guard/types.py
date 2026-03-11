@@ -123,18 +123,25 @@ class RegexSignals:
 
 @dataclass
 class StageOneSignals:
-    """Signals from Stage 1 classifiers (pre-gate + pre-filter).
+    """Signals from Stage 1 classifiers (pre-gate + pre-filter + safety policy).
 
-    Enriches the SignalVector with DeBERTa and Model Armor results so
-    Stage 2 frontier classifiers receive richer context.
+    Enriches the SignalVector with DeBERTa, Model Armor, and Safeguard
+    results so Stage 2 frontier classifiers receive richer context.
     """
 
+    # DeBERTa pre-filter
     deberta_score: float | None = None
     deberta_label: str | None = None
     deberta_confidence: float | None = None
+    # Model Armor pre-gate
     model_armor_blocked: bool | None = None
     model_armor_confidence: str | None = None  # "LOW" | "MEDIUM" | "HIGH"
     model_armor_categories: list[str] = field(default_factory=list)
+    # Safeguard safety policy signal (P1-P6 category detection)
+    safeguard_violation: bool | None = None
+    safeguard_confidence: str | None = None  # "low" | "medium" | "high"
+    safeguard_categories: list[str] = field(default_factory=list)
+    safeguard_reasoning: str | None = None
 
 
 @dataclass

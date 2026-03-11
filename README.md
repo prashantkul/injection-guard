@@ -176,8 +176,9 @@ See [docs/ner-signals.md](docs/ner-signals.md) for details on how GLiNER NER wor
 |-----------|------|----------|-----------|--------|------|
 | [Model Armor](docs/eval-results.md#model-armor--qualifire-dataset-200-samples) | GCP API | 58-75% | 89-95% | 18-56% | Optional pre-gate. FP rates vary by domain — evaluate on your traffic. |
 | [HF DeBERTa](docs/litguard-spec.md) | Local GPU | 65-70% | 59-71% | 65-99% | Fast pre-filter (~100ms). Fine-tunable on customer data. |
+| [Safeguard](docs/safeguard-policy.md) | Local GPU | 60.5% | 92% | 23% | Safety policy signal. Detects policy categories (P1-P6) as context for Stage 2. |
 
-Model Armor and DeBERTa run *before* frontier classifiers as Stage 1. Model Armor (optional, requires GCP) screens for high-confidence injections. DeBERTa provides fast local classification via [litguard](docs/litguard-spec.md) and can be [fine-tuned](docs/fine-tuning-strategy.md) per domain. Both results enrich the `SignalVector` passed to Stage 2 classifiers as supplementary context. See [Google Cloud Model Armor docs](https://cloud.google.com/security/products/model-armor) for template configuration and [docs/safeguard-policy.md](docs/safeguard-policy.md) for gpt-oss-safeguard policy setup.
+Stage 1 runs *before* frontier classifiers. Model Armor (optional, requires GCP) screens for high-confidence injections. DeBERTa provides fast local classification via [litguard](docs/litguard-spec.md) and can be [fine-tuned](docs/fine-tuning-strategy.md) per domain. Safeguard contributes safety policy category signals (instruction override, role hijacking, prompt extraction, delimiter injection, encoded attacks, indirect injection) — while its PI/JB recall is low, the category-level reasoning provides valuable context for Stage 2 frontier models. All Stage 1 results enrich the `SignalVector` passed to Stage 2 as supplementary signals. See [Google Cloud Model Armor docs](https://cloud.google.com/security/products/model-armor) for template configuration.
 
 ### Stage 2: Frontier Classifiers
 
@@ -186,8 +187,6 @@ Model Armor and DeBERTa run *before* frontier classifiers as Stage 1. Model Armo
 | Anthropic | API | 2.0 | api | 83.5% | Claude with few-shot classification prompt |
 | OpenAI | API | 1.5 | api | 82.0% | GPT-5 with reasoning tokens (high effort) |
 | Gemini | API | 1.5 | api | 80.5% | Gemini via google-genai with few-shot prompt |
-| HF DeBERTa | Local | 1.0 | local | 65-70% | HuggingFace models via litguard (fine-tunable) |
-| Safeguard | Local | 1.5 | local | 60.5% | gpt-oss-safeguard with 6-category PI/JB policy |
 | Local LLM | Local | 1.5 | local | — | Any Ollama/vLLM model with classification prompt |
 | ONNX | Local | 1.0 | local | — | ONNX Runtime inference |
 
