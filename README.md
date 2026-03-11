@@ -10,7 +10,13 @@
 [![HuggingFace](https://img.shields.io/badge/HuggingFace-DeBERTa-FFD21E.svg)](https://huggingface.co)
 [![Model Armor](https://img.shields.io/badge/Google_Cloud-Model_Armor-4285F4.svg)](https://cloud.google.com/security/products/model-armor)
 
-Two-stage prompt injection detection system with an ensemble classifier architecture. **Stage 1** (pre-gate + pre-filter) uses Google Cloud Model Armor and fine-tunable DeBERTa models for fast, high-recall local detection (~100-200ms). **Stage 2** (frontier ensemble) escalates ambiguous cases to API classifiers (OpenAI, Anthropic, Gemini) for high-accuracy classification. Async-first Python, 6-stage preprocessor with NER-based signal detection, and cascade routing with early exit.
+Two-stage prompt injection detection system with an ensemble classifier architecture. 
+
+**Stage 1** (pre-gate + pre-filter) uses Google Cloud Model Armor and fine-tunable DeBERTa models for fast, high-recall local detection (~100-200ms). 
+
+**Stage 2** (frontier ensemble) escalates ambiguous cases to API classifiers (OpenAI, Anthropic, Gemini) for high-accuracy classification. 
+
+Built with async-first Python 3.10+. A 6-stage preprocessor pipeline (Unicode normalization, encoding detection, structural analysis, token boundary detection, GLiNER NER entity extraction, and regex pattern matching) extracts a `SignalVector` from each prompt before classification. The cascade router runs classifiers tier-by-tier — fast local models first, frontier APIs only when needed — with early exit on high-confidence results to minimize latency and cost.
 
 ## Architecture
 
