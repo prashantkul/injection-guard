@@ -6,7 +6,7 @@ Prompt injection detection library with an ensemble classifier architecture. Asy
 
 ```mermaid
 block-beta
-  columns 5
+  columns 6
 
   block:input:1
     columns 1
@@ -26,6 +26,15 @@ block-beta
     BP["Signal Extraction"]
   end
 
+  block:fast:1
+    columns 1
+    style fast fill:#065f46,color:#fff,stroke:#047857
+    F["Fast Pre-filter"]
+    F1["DeBERTa"]
+    F2["~100ms / 99% recall"]
+    FP["Local GPU"]
+  end
+
   block:classify:1
     columns 1
     style classify fill:#2c5282,color:#fff,stroke:#2b6cb0
@@ -33,7 +42,6 @@ block-beta
     C1["OpenAI"]
     C2["Anthropic"]
     C3["Gemini"]
-    C4["Safeguard"]
     CP["Ensemble Classification"]
   end
 
@@ -56,7 +64,8 @@ block-beta
   end
 
   A --> B
-  B --> C
+  B --> F
+  F --> C
   C --> D
   D --> E1
 ```
@@ -80,9 +89,15 @@ flowchart LR
     RP["risk_prior"]
   end
 
+  subgraph Pre-filter
+    direction TB
+    HF["DeBERTa (fine-tuned)"]
+    HF2["~100ms, 99% recall"]
+  end
+
   subgraph Router
     direction TB
-    R1["Launch all classifiers"]
+    R1["Launch frontier classifiers"]
     R2["Wait for category quorum"]
     R3["Cancel remaining"]
   end
@@ -94,16 +109,27 @@ flowchart LR
   end
 
   Preprocessor --> Signals
-  Signals --> Router
+  Signals --> Pre-filter
+  Pre-filter -->|"high confidence\nbenign"| Decision
+  Pre-filter -->|"uncertain or\ninjection"| Router
   Router --> Decision
 
   style Preprocessor fill:#2d3748,color:#e2e8f0
   style Signals fill:#553c9a,color:#e9d8fd
+  style Pre-filter fill:#065f46,color:#d1fae5
   style Router fill:#2c5282,color:#bee3f8
   style Decision fill:#2f855a,color:#c6f6d5
 ```
 
-The preprocessor extracts a `SignalVector` from the raw prompt. These signals are passed to LLM classifiers as additional evidence in their prompts, and contribute to a `risk_prior` score. The parallel router fires all classifiers concurrently and waits for a category-based quorum (e.g. 1 local + 2 API) before aggregating scores into a final decision.
+### Recommended Ensemble Strategy
+
+The architecture uses a **tiered approach** optimized from [eval results](docs/eval-results.md) on the Qualifire benchmark:
+
+1. **Fast pre-filter** — DeBERTa (fine-tunable, ~100ms on GPU, 99% recall) catches obvious injections instantly and short-circuits high-confidence benign prompts. Customers can fine-tune this model on their domain data to improve precision.
+2. **Frontier ensemble** — For uncertain cases, the parallel router fires frontier API classifiers (Anthropic, OpenAI with reasoning, Gemini) and waits for quorum. These provide 80-84% accuracy with nuanced scoring.
+3. **Weighted aggregation** — The aggregator combines pre-filter and frontier scores using learned weights, then applies threshold engine for ALLOW/FLAG/BLOCK.
+
+This gives sub-200ms latency for ~70% of requests (clear benign/injection via pre-filter) while maintaining 83%+ accuracy on ambiguous cases via the frontier ensemble. See [Fine-Tuning Strategy](docs/fine-tuning-strategy.md) for improving the pre-filter model.
 
 ## Preprocessor Pipeline
 
@@ -124,16 +150,17 @@ See [docs/ner-signals.md](docs/ner-signals.md) for details on how GLiNER NER wor
 
 ## Classifiers
 
-| Classifier | Type | Weight | Category | Approach |
-|------------|------|--------|----------|----------|
-| OpenAI | API | 1.5 | api | GPT with few-shot classification prompt |
-| Anthropic | API | 2.0 | api | Claude with few-shot classification prompt |
-| Gemini | API | 1.5 | api | Gemini via Vertex AI with few-shot prompt |
-| Safeguard | Local | 1.5 | local | gpt-oss-safeguard with 6-category PI/JB policy |
-| Local LLM | Local | 1.5 | local | Any Ollama/vLLM model with classification prompt |
-| ONNX | Local | 1.0 | local | ONNX Runtime inference |
+| Classifier | Type | Weight | Category | Accuracy | Approach |
+|------------|------|--------|----------|----------|----------|
+| Anthropic | API | 2.0 | api | 83.5% | Claude with few-shot classification prompt |
+| OpenAI | API | 1.5 | api | 82.0% | GPT-5 with reasoning tokens (high effort) |
+| Gemini | API | 1.5 | api | 80.5% | Gemini via google-genai with few-shot prompt |
+| HF DeBERTa | Local | 1.0 | local | 65-70% | HuggingFace models via litguard (fine-tunable) |
+| Safeguard | Local | 1.5 | local | 60.5% | gpt-oss-safeguard with 6-category PI/JB policy |
+| Local LLM | Local | 1.5 | local | — | Any Ollama/vLLM model with classification prompt |
+| ONNX | Local | 1.0 | local | — | ONNX Runtime inference |
 
-All classifiers implement the `BaseClassifier` protocol and receive the `SignalVector` from the preprocessor. API classifiers use a shared few-shot classification prompt with signal context. Safeguard uses a custom policy-based system prompt (see [docs/safeguard-policy.md](docs/safeguard-policy.md)).
+All classifiers implement the `BaseClassifier` protocol and receive the `SignalVector` from the preprocessor. API classifiers use a shared few-shot classification prompt with signal context. Safeguard uses a custom policy-based system prompt (see [docs/safeguard-policy.md](docs/safeguard-policy.md)). HF DeBERTa models are served via [litguard](docs/litguard-spec.md) and can be [fine-tuned](docs/fine-tuning-strategy.md) on customer data.
 
 ## Routing
 
@@ -158,28 +185,29 @@ router:
 
 ```yaml
 classifiers:
-  - type: openai
-    model: gpt-5-mini-2025-08-07
-    weight: 1.5
-    category: api
+  # Fast pre-filter (fine-tunable, ~100ms)
+  - type: hf_compat
+    model: deberta-injection
+    base_url: http://192.168.1.199:8234/v1
+    weight: 1.0
+    category: local
 
+  # Frontier ensemble (high accuracy)
   - type: anthropic
     model: claude-sonnet-4-6
     weight: 2.0
     category: api
 
+  - type: openai
+    model: gpt-5-2025-08-07
+    weight: 1.5
+    reasoning_effort: high
+    category: api
+
   - type: gemini
     model: gemini-3.1-pro-preview
     weight: 1.5
-    project: ${GOOGLE_CLOUD_PROJECT}
-    region: ${GOOGLE_CLOUD_REGION}
     category: api
-
-  - type: safeguard
-    model: gpt-oss-safeguard:120b
-    base_url: http://192.168.1.199:11434/v1
-    weight: 1.5
-    category: local
 
 router:
   type: parallel
@@ -260,19 +288,27 @@ The `.env` file is loaded automatically on `InjectionGuard` init.
 
 ## Benchmark Results
 
-All classifiers tested against a standard 10-sample set (6 attacks across all policy categories, 4 benign including edge cases):
+Evaluated on [Qualifire prompt-injections-benchmark](https://huggingface.co/datasets/qualifire/prompt-injections-benchmark) (200 balanced samples: 100 injection, 100 benign). Full results in [docs/eval-results.md](docs/eval-results.md).
 
-| Model | Accuracy | Avg Latency | Notes |
-|-------|----------|-------------|-------|
-| Gemini 2.0 Flash | 10/10 | 1,130ms | Fastest API classifier |
-| OpenAI gpt-4o | 10/10 | 1,740ms | Uniform high-confidence scores |
-| Anthropic claude-sonnet-4 | 10/10 | 3,778ms | Most nuanced scoring per category |
-| gpt-oss-safeguard:120b | 10/10 | 5,601ms | Returns policy category codes (P1-P6) |
+| Model | Accuracy | Precision | Recall | F1 |
+|-------|----------|-----------|--------|-----|
+| Anthropic claude-opus-4.6 | **83.5%** | 0.860 | 0.800 | 0.829 |
+| Anthropic claude-sonnet-4.6 | 82.5% | 0.788 | 0.890 | 0.836 |
+| OpenAI gpt-5 (high reasoning) | 82.0% | 0.758 | 0.940 | 0.839 |
+| Gemini 3.1-pro-preview | 80.5% | 0.740 | 0.940 | 0.828 |
+| Gemini 3-flash-preview | 80.0% | 0.724 | 0.970 | 0.829 |
+| OpenAI gpt-5-mini (medium reasoning) | 79.0% | 0.769 | 0.830 | 0.798 |
+| protectai/deberta (open-weight) | 69.5% | 0.714 | 0.650 | 0.681 |
+| deepset/deberta (open-weight) | 65.0% | 0.589 | **0.990** | 0.739 |
 
 Run benchmarks yourself:
 
 ```bash
+# Quick model benchmarks (10-sample)
 pytest tests/integration/test_model_benchmarks.py -v -s
+
+# Full Qualifire eval (200-sample, requires API keys + HF token)
+pytest tests/integration/test_eval_classifiers.py -v -s -k "test_openai_gpt_5_high"
 ```
 
 ## Build & Test
@@ -292,8 +328,12 @@ pytest tests/integration/test_model_benchmarks.py -v -s
 
 ## Documentation
 
+- [Eval Results](docs/eval-results.md) — full benchmark results across all classifiers and models
+- [Fine-Tuning Strategy](docs/fine-tuning-strategy.md) — how to fine-tune DeBERTa models to improve detection metrics
+- [Domain Fine-Tuning](docs/domain-fine-tuning.md) — domain-specific tuning for healthcare, finance, legal, and other verticals
 - [NER Signals & Preprocessor](docs/ner-signals.md) — how GLiNER NER works and how signals augment classifiers
 - [Safeguard Policy Setup](docs/safeguard-policy.md) — gpt-oss-safeguard deployment, policy categories, and configuration
+- [litguard Spec](docs/litguard-spec.md) — LitServe-based model serving platform for HuggingFace models
 
 ## Project Structure
 
