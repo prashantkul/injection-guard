@@ -177,7 +177,7 @@ See [docs/ner-signals.md](docs/ner-signals.md) for details on how GLiNER NER wor
 | [Model Armor](docs/eval-results.md#model-armor--qualifire-dataset-200-samples) | GCP API | 58-75% | 89-95% | 18-56% | Optional pre-gate. FP rates vary by domain — evaluate on your traffic. |
 | [HF DeBERTa](docs/litguard-spec.md) | Local GPU | 65-70% | 59-71% | 65-99% | Fast pre-filter (~100ms). Fine-tunable on customer data. |
 
-Model Armor and DeBERTa run *before* frontier classifiers as Stage 1. Model Armor (optional, requires GCP) screens for high-confidence injections. DeBERTa provides fast local classification via [litguard](docs/litguard-spec.md) and can be [fine-tuned](docs/fine-tuning-strategy.md) per domain. Both results enrich the `SignalVector` passed to Stage 2 classifiers as supplementary context. See [docs/safeguard-policy.md](docs/safeguard-policy.md) for Model Armor template configuration.
+Model Armor and DeBERTa run *before* frontier classifiers as Stage 1. Model Armor (optional, requires GCP) screens for high-confidence injections. DeBERTa provides fast local classification via [litguard](docs/litguard-spec.md) and can be [fine-tuned](docs/fine-tuning-strategy.md) per domain. Both results enrich the `SignalVector` passed to Stage 2 classifiers as supplementary context. See [Google Cloud Model Armor docs](https://cloud.google.com/security/products/model-armor) for template configuration and [docs/safeguard-policy.md](docs/safeguard-policy.md) for gpt-oss-safeguard policy setup.
 
 ### Stage 2: Frontier Classifiers
 
