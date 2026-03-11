@@ -1,5 +1,14 @@
 # injection-guard
 
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Async](https://img.shields.io/badge/async-first-purple.svg)]()
+[![Ensemble](https://img.shields.io/badge/classifiers-ensemble-orange.svg)]()
+[![OpenAI](https://img.shields.io/badge/OpenAI-GPT--5-412991.svg)](https://openai.com)
+[![Anthropic](https://img.shields.io/badge/Anthropic-Claude-d4a574.svg)](https://anthropic.com)
+[![Gemini](https://img.shields.io/badge/Google-Gemini-4285F4.svg)](https://deepmind.google/technologies/gemini/)
+[![HuggingFace](https://img.shields.io/badge/HuggingFace-DeBERTa-FFD21E.svg)](https://huggingface.co)
+
 Prompt injection detection library with an ensemble classifier architecture. Async-first Python, pluggable classifiers (OpenAI, Anthropic, Gemini, gpt-oss-safeguard, Ollama/vLLM), a 6-stage preprocessor with NER-based signal detection, and parallel routing with category quorum.
 
 ## Architecture
