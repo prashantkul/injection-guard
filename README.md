@@ -8,8 +8,9 @@
 [![Anthropic](https://img.shields.io/badge/Anthropic-Claude-d4a574.svg)](https://anthropic.com)
 [![Gemini](https://img.shields.io/badge/Google-Gemini-4285F4.svg)](https://deepmind.google/technologies/gemini/)
 [![HuggingFace](https://img.shields.io/badge/HuggingFace-DeBERTa-FFD21E.svg)](https://huggingface.co)
+[![Model Armor](https://img.shields.io/badge/Google_Cloud-Model_Armor-4285F4.svg)](https://cloud.google.com/security/products/model-armor)
 
-Prompt injection detection library with an ensemble classifier architecture. Async-first Python, pluggable classifiers (OpenAI, Anthropic, Gemini, gpt-oss-safeguard, Ollama/vLLM), a 6-stage preprocessor with NER-based signal detection, and parallel routing with category quorum.
+Two-stage prompt injection detection system with an ensemble classifier architecture. **Stage 1** (pre-gate + pre-filter) uses Google Cloud Model Armor and fine-tunable DeBERTa models for fast, high-recall local detection (~100-200ms). **Stage 2** (frontier ensemble) escalates ambiguous cases to API classifiers (OpenAI, Anthropic, Gemini) for high-accuracy classification. Async-first Python, 6-stage preprocessor with NER-based signal detection, and cascade routing with early exit.
 
 ## Architecture
 
@@ -38,10 +39,11 @@ block-beta
   block:fast:1
     columns 1
     style fast fill:#065f46,color:#fff,stroke:#047857
-    F["Fast Pre-filter"]
-    F1["DeBERTa"]
-    F2["~100ms / 99% recall"]
-    FP["Local GPU"]
+    F["Pre-gate + Pre-filter"]
+    F0["Model Armor (GCP)"]
+    F1["DeBERTa (fine-tunable)"]
+    F2["~100-200ms"]
+    FP["High recall, fast exit"]
   end
 
   block:classify:1
@@ -100,8 +102,9 @@ flowchart LR
 
   subgraph Pre-filter
     direction TB
-    HF["DeBERTa (fine-tuned)"]
-    HF2["~100ms, 99% recall"]
+    MA["Model Armor (GCP)"]
+    MA -->|"pass"| HF["DeBERTa (fine-tuned)"]
+    MA -->|"BLOCK\n(high confidence)"| Decision
   end
 
   subgraph Router
@@ -134,11 +137,12 @@ flowchart LR
 
 The architecture uses a **tiered approach** optimized from [eval results](docs/eval-results.md) on the Qualifire benchmark:
 
-1. **Fast pre-filter** — DeBERTa (fine-tunable, ~100ms on GPU, 99% recall) catches obvious injections instantly and short-circuits high-confidence benign prompts. Customers can fine-tune this model on their domain data to improve precision.
-2. **Frontier ensemble** — For uncertain cases, the parallel router fires frontier API classifiers (Anthropic, OpenAI with reasoning, Gemini) and waits for quorum. These provide 80-84% accuracy with nuanced scoring.
-3. **Weighted aggregation** — The aggregator combines pre-filter and frontier scores using learned weights, then applies threshold engine for ALLOW/FLAG/BLOCK.
+1. **Pre-gate (Model Armor)** — Google Cloud Model Armor screens prompts first (~180ms, 95% precision). High-confidence injections are blocked immediately. Near-zero false positives make it safe as an early gate. Optional — requires GCP.
+2. **Fast pre-filter (DeBERTa)** — Fine-tunable DeBERTa model (~100ms on GPU, 99% recall) catches remaining obvious injections and short-circuits high-confidence benign prompts. Customers can [fine-tune](docs/fine-tuning-strategy.md) this model on their domain data.
+3. **Frontier ensemble** — For uncertain cases, the cascade/parallel router fires frontier API classifiers (Anthropic, OpenAI with reasoning, Gemini) and waits for quorum. These provide 80-84% accuracy with nuanced scoring.
+4. **Weighted aggregation** — The aggregator combines all scores using learned weights, then applies threshold engine for ALLOW/FLAG/BLOCK.
 
-This gives sub-200ms latency for ~70% of requests (clear benign/injection via pre-filter) while maintaining 83%+ accuracy on ambiguous cases via the frontier ensemble. See [Fine-Tuning Strategy](docs/fine-tuning-strategy.md) for improving the pre-filter model.
+This gives sub-200ms latency for ~70% of requests (clear benign/injection via pre-gate + pre-filter) while maintaining 83%+ accuracy on ambiguous cases via the frontier ensemble.
 
 ## Preprocessor Pipeline
 
@@ -158,6 +162,16 @@ Signals feed into a `risk_prior` (0.0-1.0) that can block early or escalate rout
 See [docs/ner-signals.md](docs/ner-signals.md) for details on how GLiNER NER works and how signals augment classifiers.
 
 ## Classifiers
+
+### Pre-gate
+
+| Gate | Type | Accuracy | Precision | Role |
+|------|------|----------|-----------|------|
+| [Model Armor](docs/eval-results.md#model-armor--qualifire-dataset-200-samples) | GCP API | 58-75% | 89-95% | High-precision pre-gate. Blocks obvious injections with near-zero false positives. |
+
+Model Armor runs *before* classifiers as an optional pre-gate. Its high precision (89-95%) and low false positive rate (1-7%) make it safe to block immediately on high-confidence detections. See [docs/safeguard-policy.md](docs/safeguard-policy.md) for template configuration.
+
+### Classifiers
 
 | Classifier | Type | Weight | Category | Accuracy | Approach |
 |------------|------|--------|----------|----------|----------|
@@ -214,6 +228,15 @@ This gives sub-200ms decisions for ~70% of traffic (clear benign/injection via D
 ### YAML Config
 
 ```yaml
+# --- Stage 1: Pre-gate + Pre-filter (fast, high recall) ---
+gate:
+  type: model_armor
+  project: ${GOOGLE_CLOUD_PROJECT}
+  location: global
+  template_id: my-injection-template
+  block_on: HIGH              # block only high-confidence detections
+  fail_mode: open             # if MA is down, let prompts through
+
 classifiers:
   # Fast pre-filter (fine-tunable, ~100ms)
   - type: hf_compat
@@ -222,7 +245,7 @@ classifiers:
     weight: 1.0
     category: local
 
-  # Frontier ensemble (high accuracy)
+  # --- Stage 2: Frontier ensemble (high accuracy) ---
   - type: anthropic
     model: claude-sonnet-4-6
     weight: 2.0
@@ -240,11 +263,11 @@ classifiers:
     category: api
 
 router:
-  type: parallel
+  type: cascade
   timeout_ms: 10000
-  category_quorum:
-    local: 1
-    api: 2
+  fast_confidence: 0.85
+  escalate_on_high_risk_prior: true
+  risk_prior_escalation_threshold: 0.7
 
 thresholds:
   block: 0.85
@@ -320,6 +343,8 @@ The `.env` file is loaded automatically on `InjectionGuard` init.
 
 Evaluated on [Qualifire prompt-injections-benchmark](https://huggingface.co/datasets/qualifire/prompt-injections-benchmark) (200 balanced samples: 100 injection, 100 benign). Full results in [docs/eval-results.md](docs/eval-results.md).
 
+**Stage 2: Frontier Classifiers**
+
 | Model | Accuracy | Precision | Recall | F1 |
 |-------|----------|-----------|--------|-----|
 | Anthropic claude-opus-4.6 | **83.5%** | 0.860 | 0.800 | 0.829 |
@@ -328,8 +353,15 @@ Evaluated on [Qualifire prompt-injections-benchmark](https://huggingface.co/data
 | Gemini 3.1-pro-preview | 80.5% | 0.740 | 0.940 | 0.828 |
 | Gemini 3-flash-preview | 80.0% | 0.724 | 0.970 | 0.829 |
 | OpenAI gpt-5-mini (medium reasoning) | 79.0% | 0.769 | 0.830 | 0.798 |
-| protectai/deberta (open-weight) | 69.5% | 0.714 | 0.650 | 0.681 |
-| deepset/deberta (open-weight) | 65.0% | 0.589 | **0.990** | 0.739 |
+
+**Stage 1: Pre-gate + Pre-filter (local/fast)**
+
+| Model | Accuracy | Precision | Recall | F1 | Latency |
+|-------|----------|-----------|--------|----|---------|
+| Model Armor (MA Low) | 74.5% | 0.889 | 0.560 | 0.687 | ~800ms |
+| Model Armor (MA High) | 58.5% | **0.947** | 0.180 | 0.303 | ~180ms |
+| protectai/deberta (open-weight) | 69.5% | 0.714 | 0.650 | 0.681 | ~100ms |
+| deepset/deberta (open-weight) | 65.0% | 0.589 | **0.990** | 0.739 | ~100ms |
 
 Run benchmarks yourself:
 
