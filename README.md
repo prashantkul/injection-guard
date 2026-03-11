@@ -358,6 +358,7 @@ pytest tests/integration/test_model_benchmarks.py -v -s
 
 ## Documentation
 
+- [Deployment Guide](docs/deployment-guide.md) — production deployment patterns, FastAPI/LangChain integration, scaling, and monitoring
 - [Eval Results](docs/eval-results.md) — full benchmark results across all classifiers and models
 - [Fine-Tuning Strategy](docs/fine-tuning-strategy.md) — how to fine-tune DeBERTa models to improve detection metrics
 - [Domain Fine-Tuning](docs/domain-fine-tuning.md) — domain-specific tuning for healthcare, finance, legal, and other verticals

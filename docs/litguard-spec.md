@@ -3,7 +3,7 @@
 LitServe-based model serving platform for prompt injection detection models, with a React monitoring UI. Designed as a DGX Spark playbook.
 
 ## Stack
-- **Backend**: LitServe (litserve.ai) — ML model serving framework by Lightning AI
+- **Backend**: [LitServe](https://litserve.ai) — ML model serving framework by Lightning AI
 - **Frontend**: React + Vite + Tailwind CSS — monitoring dashboard
 - **Models**: HuggingFace classification models served as OpenAI-compatible endpoints
 
@@ -86,6 +86,7 @@ litguard/
 - GPU passthrough via nvidia-container-toolkit
 - Expose port 8234 (API) and 3000 (UI)
 - Include setup.sh that handles nvidia-docker prereqs
+- Reference implementation: [NVIDIA/dgx-spark-playbooks#65](https://github.com/NVIDIA/dgx-spark-playbooks/pull/65)
 
 ## Key Constraints
 - Use `uv` for Python dependency management
