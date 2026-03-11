@@ -1,0 +1,44 @@
+# injection-guard configuration
+# API keys loaded from .env automatically
+
+classifiers:
+
+  - type: openai
+    model: gpt-5-mini-2025-08-07
+    weight: 1.5
+    category: api
+
+  - type: anthropic
+    model: claude-sonnet-4-6
+    weight: 2.0
+    category: api
+
+  - type: gemini
+    model: gemini-3.1-pro-preview
+    weight: 1.5
+    project: ${GOOGLE_CLOUD_PROJECT}
+    region: ${GOOGLE_CLOUD_REGION}
+    category: api
+
+  - type: safeguard
+    model: gpt-oss-safeguard:120b
+    base_url: http://192.168.1.199:11434/v1
+    weight: 1.5
+    reasoning_effort: medium
+    category: local
+
+router:
+  type: parallel
+  timeout_ms: 10000
+  category_quorum:
+    local: 1
+    api: 2
+
+thresholds:
+  block: 0.85
+  flag: 0.50
+
+aggregator: weighted_average
+
+preprocessor:
+  gliner_model: urchade/gliner_base

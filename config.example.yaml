@@ -1,0 +1,46 @@
+# injection-guard configuration
+# API keys and secrets should go in .env (loaded automatically)
+
+classifiers:
+  - type: regex
+
+  - type: anthropic
+    model: claude-sonnet-4-20250514
+    weight: 2.0
+
+  - type: gemini
+    model: gemini-2.0-flash
+    weight: 1.5
+    project: ${GCP_PROJECT_ID}
+    region: ${GCP_REGION}
+
+  - type: openai
+    model: gpt-4o
+    weight: 1.5
+
+  # Local LLM via Ollama (OpenAI-compatible)
+  # - type: ollama
+  #   model: llama3.2
+  #   base_url: http://localhost:11434/v1
+  #   weight: 1.0
+
+  # Local LLM via vLLM
+  # - type: vllm
+  #   model: meta-llama/Llama-3.1-8B-Instruct
+  #   base_url: http://localhost:8000/v1
+  #   weight: 1.0
+
+router:
+  type: cascade
+  timeout_ms: 500
+  fast_confidence: 0.85
+
+thresholds:
+  block: 0.85
+  flag: 0.50
+
+aggregator: weighted_average
+
+preprocessor:
+  gliner_model: urchade/gliner_base
+  preprocessor_block_threshold: 0.9
